@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: ['main', '6']
+  pull_request:
+    branches: ['main', '6']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  static-analysis:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE: docker compose -f .docker/compose.yml -f .docker/compose.ci.yml
+      COMPOSE_BAKE: 'true'
+      CACHE_SCOPE: app-php8.3
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/setup-docker-mirror
+      - name: Build image (GHA layer cache)
+        run: $COMPOSE build app
+      - name: Start services
+        run: $COMPOSE up -d --wait app
+      - run: task analyse
+      - run: task analyse-php85
+      - run: task rector-dry
+
+  php-qa:
+    name: PHP QA (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.3', '8.4', '8.5']
+    env:
+      PHP_VERSION: ${{ matrix.php }}
+      COMPOSE: docker compose -f .docker/compose.yml -f .docker/compose.ci.yml
+      COMPOSE_BAKE: 'true'
+      CACHE_SCOPE: app-php${{ matrix.php }}
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/setup-docker-mirror
+      - name: Build image (GHA layer cache)
+        run: $COMPOSE build app
+      - name: Start services
+        run: $COMPOSE up -d --wait app
+      # PHP 8.3 owns the coverage gate; 8.4/8.5 run the suites without pcov overhead.
+      - if: matrix.php == '8.3'
+        name: Run tests with coverage + 90% gate
+        run: |
+          $COMPOSE exec -T app vendor/bin/phpunit \
+            --log-junit coverage/junit.xml \
+            --coverage-clover coverage/clover.xml
+          $COMPOSE exec -T app vendor/bin/coverage-check coverage/clover.xml 90
+      - if: matrix.php != '8.3'
+        name: Run tests
+        run: >-
+          $COMPOSE exec -T app vendor/bin/phpunit
+          --log-junit coverage/junit.xml
+      - uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: PHPUnit Results (PHP ${{ matrix.php }})
+          path: coverage/junit.xml
+          reporter: java-junit
