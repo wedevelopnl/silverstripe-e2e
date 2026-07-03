@@ -8,6 +8,7 @@ use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Dev\BuildTask;
 use SilverStripe\Forms\HTMLEditor\HTMLEditorConfig;
 use SilverStripe\TinyMCE\TinyMCECombinedGenerator;
+use SilverStripe\TinyMCE\TinyMCEConfig;
 use SilverStripe\TinyMCE\TinyMCEScriptGenerator;
 use SilverStripe\i18n\i18n;
 use SilverStripe\PolyExecution\PolyOutput;
@@ -31,7 +32,14 @@ class GenerateTinyMCECombinedTask extends BuildTask
             /** @var TinyMCEScriptGenerator $generator */
             $generator = Injector::inst()->create(TinyMCEScriptGenerator::class);
             foreach (array_keys($editorConfigs) as $identifier) {
-                $generator->getScriptURL(HTMLEditorConfig::get($identifier));
+                $config = HTMLEditorConfig::get($identifier);
+                // Only TinyMCE-backed configs expose a combined script to pre-generate;
+                // skip any other HTMLEditorConfig implementation that may be registered.
+                if (!$config instanceof TinyMCEConfig) {
+                    continue;
+                }
+
+                $generator->getScriptURL($config);
             }
         };
 

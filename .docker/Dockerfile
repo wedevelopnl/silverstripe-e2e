@@ -8,6 +8,11 @@ RUN install-php-extensions intl gd mysqli pdo_mysql zip bcmath exif pcov
 # Measure coverage against the mounted module source only.
 RUN echo 'pcov.directory=/module/src' > /usr/local/etc/php/conf.d/99-pcov.ini
 
+# The TinyMCE build task loads a translation catalogue per i18n locale (hundreds),
+# so PHP's 128M default is insufficient; raise it container-wide so every invocation
+# (task, CI running vendor/bin/phpunit directly, and manual runs) is covered.
+RUN echo 'memory_limit=512M' > /usr/local/etc/php/conf.d/99-memory.ini
+
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
 WORKDIR /app
