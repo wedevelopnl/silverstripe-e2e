@@ -14,11 +14,27 @@
     }],
     "require": {
         "php": "^8.3",
-        "silverstripe/framework": "^6"
+        "silverstripe/framework": "^6",
+        "silverstripe/htmleditor-tinymce": "^1.1"
+    },
+    "require-dev": {
+        "cambis/silverstan": "^2.1",
+        "phpstan/extension-installer": "^1.4",
+        "phpstan/phpstan": "^2.1",
+        "phpstan/phpstan-deprecation-rules": "^2.0",
+        "phpunit/phpunit": "^11.3",
+        "rregeer/phpunit-coverage-check": "^0.3",
+        "tomasvotruba/type-coverage": "^2.0",
+        "wernerkrauss/silverstripe-rector": "^1.0"
     },
     "autoload": {
         "psr-4": {
             "WeDevelop\\E2e\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "WeDevelop\\E2e\\Tests\\": "tests/"
         }
     },
     "config": {

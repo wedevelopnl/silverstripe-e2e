@@ -1,0 +1,102 @@
+version: '3'
+
+# Build/dev task runner for the SilverStripe E2E module.
+# Install Task: https://taskfile.dev/installation
+
+vars:
+  COMPOSE: docker compose -f .docker/compose.yml
+
+tasks:
+  up:
+    desc: Start services (build if needed)
+    cmds:
+      - "{{.COMPOSE}} up -d --build --wait"
+
+  down:
+    desc: Stop services
+    cmds:
+      - "{{.COMPOSE}} down"
+
+  destroy:
+    desc: Stop services and remove volumes
+    cmds:
+      - "{{.COMPOSE}} down -v"
+
+  build:
+    desc: Build images without starting
+    cmds:
+      - "{{.COMPOSE}} build"
+
+  ensure-up:
+    desc: Ensure services are running and ready
+    cmds:
+      - "{{.COMPOSE}} exec app true 2>/dev/null || {{.COMPOSE}} up -d --build --wait"
+
+  test:
+    desc: Run all PHP tests (unit + integration)
+    deps: [ensure-up]
+    cmds:
+      - "{{.COMPOSE}} exec app vendor/bin/phpunit"
+
+  test-unit:
+    desc: Run PHP unit tests (no database or framework)
+    deps: [ensure-up]
+    cmds:
+      - "{{.COMPOSE}} exec app vendor/bin/phpunit --testsuite unit"
+
+  test-integration:
+    desc: Run PHP integration tests (full SilverStripe environment)
+    deps: [ensure-up]
+    cmds:
+      - "{{.COMPOSE}} exec app vendor/bin/phpunit --testsuite integration"
+
+  analyse:
+    desc: Run PHPStan static analysis
+    deps: [ensure-up]
+    cmds:
+      - "{{.COMPOSE}} exec app vendor/bin/phpstan analyse -c phpstan.neon.dist --memory-limit=512M"
+
+  analyse-php85:
+    desc: Run PHPStan with the analysis target pinned to PHP 8.5
+    deps: [ensure-up]
+    cmds:
+      - "{{.COMPOSE}} exec app vendor/bin/phpstan analyse -c phpstan-php85.neon.dist --memory-limit=512M"
+
+  rector:
+    desc: Run Rector refactoring (applies changes)
+    deps: [ensure-up]
+    cmds:
+      - "{{.COMPOSE}} exec app vendor/bin/rector process"
+
+  rector-dry:
+    desc: Run Rector in dry-run mode (preview only)
+    deps: [ensure-up]
+    cmds:
+      - "{{.COMPOSE}} exec app vendor/bin/rector process --dry-run"
+
+  coverage:
+    desc: Run all tests with coverage (HTML + Clover XML)
+    deps: [ensure-up]
+    cmds:
+      - >-
+        {{.COMPOSE}} exec app vendor/bin/phpunit
+        --coverage-html coverage/html
+        --coverage-clover coverage/clover.xml
+
+  coverage-check:
+    desc: Check PHP coverage meets the 90% threshold
+    deps: [coverage]
+    cmds:
+      - "{{.COMPOSE}} exec app vendor/bin/coverage-check coverage/clover.xml 90"
+
+  flush:
+    desc: Clear SilverStripe cache
+    deps: [ensure-up]
+    cmds:
+      - "{{.COMPOSE}} exec app vendor/bin/sake flush"
+
+  dev-build:
+    desc: Run dev/build to rebuild the database and manifest
+    deps: [ensure-up]
+    cmds:
+      - "{{.COMPOSE}} exec app vendor/bin/sake dev/build flush=1"
