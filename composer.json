@@ -1,0 +1,35 @@
+{
+    "name": "wedevelopnl/silverstripe-e2e",
+    "description": "Helper module to run E2E tests against a Silverstripe website inside CI.",
+    "type": "silverstripe-vendormodule",
+    "keywords": [
+        "silverstripe",
+        "development",
+        "e2e",
+        "gitlab"
+    ],
+    "authors": [{
+        "name": "WeDevelop",
+        "email": "development@wedevelop.nl"
+    }],
+    "require": {
+        "php": "^8.3",
+        "silverstripe/framework": "^6"
+    },
+    "autoload": {
+        "psr-4": {
+            "WeDevelop\\E2e\\": "src/"
+        }
+    },
+    "config": {
+        "allow-plugins": {
+            "composer/installers": false
+        }
+    },
+    "extra": {
+        "installer-name": "silverstripe-e2e",
+        "branch-alias": {
+            "dev-main": "1.x-dev"
+        }
+    }
+}
