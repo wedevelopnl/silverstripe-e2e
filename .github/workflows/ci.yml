@@ -99,7 +99,7 @@ jobs:
         run: >-
           $COMPOSE exec -T app vendor/bin/phpunit
           --log-junit coverage/junit.xml
-      - uses: dorny/test-reporter@v1
+      - uses: dorny/test-reporter@v3
         if: always()
         with:
           name: PHPUnit Results (PHP ${{ matrix.php }})
