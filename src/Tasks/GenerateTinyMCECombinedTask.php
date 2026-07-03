@@ -7,8 +7,8 @@ namespace WeDevelop\E2e\Tasks;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Dev\BuildTask;
 use SilverStripe\Forms\HTMLEditor\HTMLEditorConfig;
-use SilverStripe\Forms\HTMLEditor\TinyMCECombinedGenerator;
-use SilverStripe\Forms\HTMLEditor\TinyMCEScriptGenerator;
+use SilverStripe\TinyMCE\TinyMCECombinedGenerator;
+use SilverStripe\TinyMCE\TinyMCEScriptGenerator;
 use SilverStripe\i18n\i18n;
 use SilverStripe\PolyExecution\PolyOutput;
 use Symfony\Component\Console\Command\Command;
@@ -42,7 +42,11 @@ class GenerateTinyMCECombinedTask extends BuildTask
                 i18n::with_locale($locale, $doGenerate);
             }
         } else {
+            // @codeCoverageIgnoreStart
+            // Unreachable once the framework has booted (i18n is always autoloadable);
+            // retained only as a defensive fallback for a stripped runtime.
             $doGenerate();
+            // @codeCoverageIgnoreEnd
         }
 
         $output->writeln('Generated TinyMCE configuration files');
