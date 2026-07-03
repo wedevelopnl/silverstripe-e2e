@@ -38,7 +38,12 @@ jobs:
       - name: Build image (GHA layer cache)
         run: $COMPOSE build app
       - name: Start services
-        run: $COMPOSE up -d --wait app
+        run: |
+          $COMPOSE up -d --wait app || {
+            echo "::group::app container logs"; $COMPOSE logs app; echo "::endgroup::"
+            $COMPOSE ps -a
+            exit 1
+          }
       - run: task analyse
       - run: task analyse-php85
       - run: task rector-dry
@@ -75,7 +80,12 @@ jobs:
       - name: Build image (GHA layer cache)
         run: $COMPOSE build app
       - name: Start services
-        run: $COMPOSE up -d --wait app
+        run: |
+          $COMPOSE up -d --wait app || {
+            echo "::group::app container logs"; $COMPOSE logs app; echo "::endgroup::"
+            $COMPOSE ps -a
+            exit 1
+          }
       # PHP 8.3 owns the coverage gate; 8.4/8.5 run the suites without pcov overhead.
       - if: matrix.php == '8.3'
         name: Run tests with coverage + 90% gate
