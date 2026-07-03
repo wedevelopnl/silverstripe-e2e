@@ -1,6 +1,15 @@
 ARG PHP_VERSION=8.3
 FROM php:${PHP_VERSION}-cli
 
+# git + unzip: the official php:*-cli image ships neither. Composer needs git to fall
+# back to a source clone when a dist (zipball) download fails transiently — without it a
+# single failed download aborts the whole install ("Source fallback is disabled. Not
+# trying alternative sources."). unzip gives faster, more reliable archive extraction
+# than composer's PHP-zip fallback.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git unzip \
+    && rm -rf /var/lib/apt/lists/*
+
 # mlocati's installer builds the needed extensions across all target PHP versions.
 COPY --from=mlocati/php-extension-installer /usr/bin/install-php-extensions /usr/local/bin/
 RUN install-php-extensions intl gd mysqli pdo_mysql zip bcmath exif pcov
