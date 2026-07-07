@@ -1,0 +1,4 @@
+WeDevelop\E2e\Tests\Support\E2eFixtureTestPage:
+  page1:
+    Title: 'E2E Simple Page'
+    URLSegment: 'e2e-simple'
