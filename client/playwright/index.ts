@@ -16,6 +16,14 @@ interface LoadEnvelope {
   data: FixtureLoadResponse;
 }
 
+export type FixtureLoadAllResponse = Record<string, FixtureLoadResponse>;
+
+interface LoadAllEnvelope {
+  success: boolean;
+  error?: string;
+  fixtures: FixtureLoadAllResponse;
+}
+
 export interface FixtureClientOptions {
   /** Dev endpoint the controller is registered at. Defaults to `/dev/e2e-fixtures`. */
   endpoint?: string;
@@ -44,6 +52,20 @@ export function createFixtureClient(options: FixtureClientOptions = {}) {
     return body.data;
   }
 
+  async function loadAll(request: APIRequestContext): Promise<FixtureLoadAllResponse> {
+    const response = await request.post(`${endpoint}/load-all`);
+    if (!response.ok()) {
+      throw new Error(`Fixture load-all failed (${response.status()}): ${await response.text()}`);
+    }
+
+    const body = (await response.json()) as LoadAllEnvelope;
+    if (!body.success) {
+      throw new Error(`Fixture load-all failed: ${body.error ?? 'unknown error'}`);
+    }
+
+    return body.fixtures;
+  }
+
   async function reset(request: APIRequestContext): Promise<void> {
     const response = await request.post(`${endpoint}/reset?confirm=1`);
     if (!response.ok()) {
@@ -65,7 +87,7 @@ export function createFixtureClient(options: FixtureClientOptions = {}) {
     return result;
   }
 
-  return { load, reset, loadAndNavigate };
+  return { load, loadAll, reset, loadAndNavigate };
 }
 
 export interface AdminAuthOptions {

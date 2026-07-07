@@ -21,3 +21,11 @@ test('navigates to the loaded page in the CMS', async ({ page, request }) => {
   await expect(page).toHaveURL(new RegExp(`/admin/pages/edit/show/${result.pageId}`));
   await expect(page.getByText('E2E Home').first()).toBeVisible();
 });
+
+test('loads all configured fixtures over HTTP', async ({ request }) => {
+  const results = await fixtures.loadAll(request);
+
+  expect(results['demo-home']).toBeDefined();
+  expect(results['demo-home'].pageId).toBeGreaterThan(0);
+  expect(results['demo-home'].pageUrl).toContain('e2e-home');
+});
