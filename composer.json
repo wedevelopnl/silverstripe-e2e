@@ -2,6 +2,7 @@
     "name": "wedevelopnl/silverstripe-e2e",
     "description": "Helper module to run E2E tests against a Silverstripe website inside CI.",
     "type": "silverstripe-vendormodule",
+    "license": "BSD-3-Clause",
     "keywords": [
         "silverstripe",
         "development",
