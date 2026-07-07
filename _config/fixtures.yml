@@ -6,6 +6,6 @@ Only:
 SilverStripe\Dev\DevelopmentAdmin:
   controllers:
     e2e-fixtures:
-      controller: WeDevelop\E2e\Fixtures\FixtureController
+      class: WeDevelop\E2e\Fixtures\FixtureController
 SilverStripe\Control\Session:
   strict_user_agent_check: false
