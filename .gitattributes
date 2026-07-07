@@ -1,0 +1,12 @@
+# Exclude development-only files from the Packagist/Composer dist archive.
+# `export-ignore` keeps these out of `git archive` (i.e. the tarball Packagist
+# publishes), while leaving them in the repository for local development and CI.
+
+/.docker         export-ignore
+/.github         export-ignore
+/coverage        export-ignore
+/tests           export-ignore
+
+/.gitattributes  export-ignore
+/.gitignore      export-ignore
+/Taskfile.yml    export-ignore
