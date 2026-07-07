@@ -105,3 +105,77 @@ jobs:
           name: PHPUnit Results (PHP ${{ matrix.php }})
           path: coverage/junit.xml
           reporter: java-junit
+
+  e2e:
+    name: E2E (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox]
+    env:
+      COMPOSE: docker compose -f .docker/compose.yml -f .docker/compose.ci.yml
+      COMPOSE_BAKE: 'true'
+      CACHE_SCOPE: app-php8.3
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: arduino/setup-task@v3
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - uses: actions/cache/restore@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ matrix.browser }}-${{ hashFiles('package-lock.json') }}
+      - if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install ${{ matrix.browser }}
+      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ matrix.browser }}-${{ hashFiles('package-lock.json') }}
+      - uses: ./.github/actions/setup-docker-mirror
+      - run: task docker-env
+      - name: Build image (GHA layer cache)
+        run: $COMPOSE build app
+      - name: Start services
+        run: |
+          $COMPOSE up -d --wait app || {
+            echo "::group::app container logs"; $COMPOSE logs app; echo "::endgroup::"
+            $COMPOSE ps -a
+            exit 1
+          }
+      - name: Run Playwright
+        run: npx playwright test --project=${{ matrix.browser }} --reporter=html,junit
+        env:
+          PLAYWRIGHT_JUNIT_OUTPUT_NAME: reports/playwright-junit.xml
+      - uses: dorny/test-reporter@v3
+        if: always()
+        with:
+          name: Playwright Results (${{ matrix.browser }})
+          path: reports/playwright-junit.xml
+          reporter: java-junit
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-${{ matrix.browser }}
+          path: playwright-report/
+          retention-days: 7
