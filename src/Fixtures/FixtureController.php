@@ -6,6 +6,7 @@ namespace WeDevelop\E2e\Fixtures;
 
 use InvalidArgumentException;
 use Override;
+use RuntimeException;
 use SilverStripe\Control\Controller;
 use SilverStripe\Control\Director;
 use SilverStripe\Control\HTTPRequest;
@@ -95,6 +96,11 @@ class FixtureController extends Controller
             return $this->jsonResponse(400, [
                 'success' => false,
                 'error' => $invalidArgumentException->getMessage(),
+            ]);
+        } catch (RuntimeException $runtimeException) {
+            return $this->jsonResponse(500, [
+                'success' => false,
+                'error' => $runtimeException->getMessage(),
             ]);
         }
 
