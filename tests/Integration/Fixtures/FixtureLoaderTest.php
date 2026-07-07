@@ -13,6 +13,7 @@ use SilverStripe\Dev\SapphireTest;
 use SilverStripe\Versioned\Versioned;
 use WeDevelop\E2e\Fixtures\FixtureLoader;
 use WeDevelop\E2e\Tests\Support\E2eFixtureTestPage;
+use WeDevelop\E2e\Tests\Support\E2eOtherTestPage;
 use WeDevelop\E2e\Tests\Support\E2eVersionedObject;
 use WeDevelop\E2e\Tests\Support\LoaderHookSpy;
 
@@ -21,6 +22,7 @@ final class FixtureLoaderTest extends SapphireTest
 {
     protected static $extra_dataobjects = [
         E2eFixtureTestPage::class,
+        E2eOtherTestPage::class,
         E2eVersionedObject::class,
     ];
 
@@ -125,6 +127,82 @@ final class FixtureLoaderTest extends SapphireTest
         $objId = $result->fixtureMap[E2eVersionedObject::class]['obj1'];
         $live = Versioned::get_by_stage(E2eVersionedObject::class, Versioned::LIVE)->byID($objId);
         self::assertNotNull($live);
+    }
+
+    public function testLoadThrowsWhenFixtureCreatesNoSiteTree(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'fixtures', [
+            'no-sitetree' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/no-sitetree.yml',
+        ]);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Fixture "no-sitetree" did not create any SiteTree records');
+
+        FixtureLoader::create()->load('no-sitetree');
+    }
+
+    public function testLoadFallsBackToNonAllowlistedSiteTreeSubclass(): void
+    {
+        // fixture_page_classes only lists E2eFixtureTestPage, but the fixture
+        // creates an E2eOtherTestPage. The preferred-class lookup misses, so the
+        // loader falls back to the first SiteTree subclass the factory produced.
+        Config::modify()->set(FixtureLoader::class, 'fixtures', [
+            'fallback-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/fallback-page.yml',
+        ]);
+
+        $result = FixtureLoader::create()->load('fallback-page');
+
+        self::assertArrayHasKey(E2eOtherTestPage::class, $result->fixtureMap);
+        self::assertGreaterThan(0, $result->pageId);
+        self::assertStringContainsString('e2e-fallback', $result->pageUrl);
+    }
+
+    public function testLoadThrowsWhenArrayConfigHasNoPath(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'fixtures', [
+            'broken' => ['post_actions' => []],
+        ]);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Fixture "broken" has no path configured');
+
+        FixtureLoader::create()->load('broken');
+    }
+
+    public function testLoadThrowsWhenFixtureFileIsMissing(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'fixtures', [
+            'missing-file' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/does-not-exist.yml',
+        ]);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Fixture file not found');
+
+        FixtureLoader::create()->load('missing-file');
+    }
+
+    public function testLoadThrowsWhenPostActionReferencesUnknownFixture(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'fixtures', [
+            'bad-postaction' => [
+                'path' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/simple-page.yml',
+                'post_actions' => [
+                    [
+                        'action' => 'modify',
+                        'class' => E2eVersionedObject::class,
+                        'identifier' => 'nonexistent',
+                        'fields' => ['Title' => 'unused'],
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage(
+            'Post-action references unknown fixture: ' . E2eVersionedObject::class . '.nonexistent',
+        );
+
+        FixtureLoader::create()->load('bad-postaction');
     }
 
     /**
