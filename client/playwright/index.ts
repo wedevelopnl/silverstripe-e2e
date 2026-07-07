@@ -32,11 +32,17 @@ export interface FixtureClientOptions {
    * `loadAndNavigate` waits for it to become hidden after navigation.
    */
   editorReadySelector?: string;
+  /**
+   * Timeout (ms) for the `editorReadySelector` wait in `loadAndNavigate`. When
+   * omitted, Playwright's default action timeout applies.
+   */
+  editorReadyTimeout?: number;
 }
 
 export function createFixtureClient(options: FixtureClientOptions = {}) {
   const endpoint = options.endpoint ?? '/dev/e2e-fixtures';
   const editorReadySelector = options.editorReadySelector ?? null;
+  const editorReadyTimeout = options.editorReadyTimeout;
 
   async function load(request: APIRequestContext, fixture: string): Promise<FixtureLoadResponse> {
     const response = await request.post(`${endpoint}/load`, { form: { fixture } });
@@ -71,17 +77,25 @@ export function createFixtureClient(options: FixtureClientOptions = {}) {
     if (!response.ok()) {
       throw new Error(`Fixture reset failed (${response.status()}): ${await response.text()}`);
     }
+
+    const body = (await response.json()) as { success: boolean; error?: string };
+    if (!body.success) {
+      throw new Error(`Fixture reset failed: ${body.error ?? 'unknown error'}`);
+    }
   }
 
   async function loadAndNavigate(
     page: Page,
-    request: APIRequestContext,
     fixture: string,
+    request: APIRequestContext = page.request,
   ): Promise<FixtureLoadResponse> {
     const result = await load(request, fixture);
     await page.goto(`/admin/pages/edit/show/${result.pageId}`);
     if (editorReadySelector !== null) {
-      await page.locator(editorReadySelector).waitFor({ state: 'hidden' });
+      await page.locator(editorReadySelector).waitFor({
+        state: 'hidden',
+        timeout: editorReadyTimeout,
+      });
     }
 
     return result;
