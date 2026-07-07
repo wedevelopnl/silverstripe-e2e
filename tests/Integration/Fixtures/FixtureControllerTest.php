@@ -16,6 +16,7 @@ use SilverStripe\Dev\SapphireTest;
 use WeDevelop\E2e\Fixtures\FixtureController;
 use WeDevelop\E2e\Fixtures\FixtureLoader;
 use WeDevelop\E2e\Tests\Support\E2eFixtureTestPage;
+use WeDevelop\E2e\Tests\Support\E2eOtherTestPage;
 use WeDevelop\E2e\Tests\Support\E2eVersionedObject;
 
 #[CoversClass(FixtureController::class)]
@@ -23,6 +24,7 @@ final class FixtureControllerTest extends SapphireTest
 {
     protected static $extra_dataobjects = [
         E2eFixtureTestPage::class,
+        E2eOtherTestPage::class,
         E2eVersionedObject::class,
     ];
 
@@ -134,6 +136,82 @@ final class FixtureControllerTest extends SapphireTest
         self::assertInstanceOf(HTTPResponse::class, $response);
         self::assertSame(400, $response->getStatusCode());
         self::assertStringContainsString('confirm=1', (string) $response->getBody());
+    }
+
+    public function testLoadAllReturnsSuccessJsonForEveryFixture(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'fixtures', [
+            'simple-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/simple-page.yml',
+            'fallback-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/fallback-page.yml',
+        ]);
+        Config::modify()->set(FixtureLoader::class, 'fixture_page_classes', [
+            E2eFixtureTestPage::class,
+            E2eOtherTestPage::class,
+        ]);
+
+        $response = $this->dispatch('POST', 'load-all');
+
+        self::assertInstanceOf(HTTPResponse::class, $response);
+        self::assertSame(200, $response->getStatusCode());
+
+        /** @var array{success: bool, fixtures: array<string, array<string, mixed>>} $body */
+        $body = json_decode((string) $response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+        self::assertTrue($body['success']);
+        self::assertArrayHasKey('simple-page', $body['fixtures']);
+        self::assertArrayHasKey('fallback-page', $body['fixtures']);
+        self::assertArrayHasKey('pageId', $body['fixtures']['simple-page']);
+    }
+
+    public function testLoadAllWithNoFixturesConfiguredReturns400(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'fixtures', []);
+
+        $response = $this->dispatch('POST', 'load-all');
+
+        self::assertInstanceOf(HTTPResponse::class, $response);
+        self::assertSame(400, $response->getStatusCode());
+
+        /** @var array{success: bool, error: string} $body */
+        $body = json_decode((string) $response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+        self::assertFalse($body['success']);
+        self::assertStringContainsString('No fixtures', $body['error']);
+    }
+
+    public function testLoadAllIsFailFastReturns500WhenFixtureCreatesNoSiteTree(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'fixtures', [
+            'simple-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/simple-page.yml',
+            'broken' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/no-sitetree.yml',
+        ]);
+
+        $response = $this->dispatch('POST', 'load-all');
+
+        self::assertInstanceOf(HTTPResponse::class, $response);
+        self::assertSame(500, $response->getStatusCode());
+        self::assertStringContainsString('did not create any SiteTree', (string) $response->getBody());
+    }
+
+    public function testLoadAllIsFailFastReturns400WhenFixturePathInvalid(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'fixtures', [
+            'missing-file' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/does-not-exist.yml',
+        ]);
+
+        $response = $this->dispatch('POST', 'load-all');
+
+        self::assertInstanceOf(HTTPResponse::class, $response);
+        self::assertSame(400, $response->getStatusCode());
+        self::assertStringContainsString('Fixture file not found', (string) $response->getBody());
+    }
+
+    public function testLoadAllNonDevRequestReturns404(): void
+    {
+        Injector::inst()->get(Kernel::class)->setEnvironment('live');
+
+        $response = $this->dispatch('POST', 'load-all');
+
+        self::assertInstanceOf(HTTPResponse_Exception::class, $response);
+        self::assertSame(404, $response->getResponse()->getStatusCode());
     }
 
     public function testNonDevRequestReturns404(): void

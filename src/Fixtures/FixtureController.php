@@ -17,7 +17,8 @@ use SilverStripe\Control\HTTPResponse;
  *
  * Registered with DevelopmentAdmin at /dev/e2e-fixtures via _config/fixtures.yml
  * (gated Only: environment: dev). Playwright POSTs a fixture name to /load and
- * gets JSON with page IDs for CMS navigation; POST /reset clears E2E data.
+ * gets JSON with page IDs for CMS navigation; POST /load-all seeds every
+ * configured fixture in one request; POST /reset clears E2E data.
  *
  * SECURITY POSTURE — read before changing the guards:
  *
@@ -47,12 +48,14 @@ class FixtureController extends Controller
     /** @var array<string, string> */
     private static array $url_handlers = [
         'POST load' => 'load',
+        'POST load-all' => 'loadAll',
         'POST reset' => 'reset',
     ];
 
     /** @var list<string> */
     private static array $allowed_actions = [
         'load',
+        'loadAll',
         'reset',
     ];
 
@@ -108,6 +111,37 @@ class FixtureController extends Controller
             'success' => true,
             'fixture' => $result->fixtureName,
             'data' => $result,
+        ]);
+    }
+
+    /**
+     * Load every configured fixture in one request (reset once, then stack).
+     *
+     * Fail-fast: the first fixture that raises aborts and is reported. Unlike
+     * {@see reset()}, this needs no `confirm` guard — like {@see load()} it is a
+     * seed operation, and the env gating in {@see init()} is the security control.
+     */
+    public function loadAll(HTTPRequest $request): HTTPResponse
+    {
+        $loader = FixtureLoader::create();
+
+        try {
+            $results = $loader->loadAll();
+        } catch (InvalidArgumentException $invalidArgumentException) {
+            return $this->jsonResponse(400, [
+                'success' => false,
+                'error' => $invalidArgumentException->getMessage(),
+            ]);
+        } catch (RuntimeException $runtimeException) {
+            return $this->jsonResponse(500, [
+                'success' => false,
+                'error' => $runtimeException->getMessage(),
+            ]);
+        }
+
+        return $this->jsonResponse(200, [
+            'success' => true,
+            'fixtures' => $results,
         ]);
     }
 
