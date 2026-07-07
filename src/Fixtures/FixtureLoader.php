@@ -91,6 +91,10 @@ class FixtureLoader
      * load() / loadAll() resets again.
      *
      * @return array<string, FixtureResult> Fixture name => result, in config order.
+     *         Fixture names are used verbatim as JSON object keys in the controller
+     *         response, so they must be non-numeric (a set of sequential
+     *         numeric-string names would make json_encode emit a JSON array
+     *         instead of an object).
      * @throws InvalidArgumentException when no fixtures are configured (before any
      *         reset) or a fixture name/path is invalid.
      * @throws RuntimeException when a fixture creates no SiteTree records.
@@ -104,12 +108,20 @@ class FixtureLoader
             );
         }
 
+        // Resolve every fixture path BEFORE resetting, so a misconfigured
+        // fixture cannot wipe E2E data or leave a partial seed (mirrors the
+        // resolve-before-reset ordering in load()).
+        $paths = [];
+        foreach ($names as $name) {
+            /** @var non-empty-string $name */
+            $paths[$name] = $this->resolveFixturePath($name);
+        }
+
         $this->reset();
 
         $results = [];
-        foreach ($names as $name) {
+        foreach ($paths as $name => $path) {
             /** @var non-empty-string $name */
-            $path = $this->resolveFixturePath($name);
             $results[$name] = $this->loadFixtureFromPath($name, $path);
         }
 

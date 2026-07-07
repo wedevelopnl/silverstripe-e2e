@@ -292,6 +292,41 @@ final class FixtureLoaderTest extends SapphireTest
         FixtureLoader::create()->loadAll();
     }
 
+    public function testLoadAllDoesNotResetWhenAFixturePathIsInvalid(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'fixtures', [
+            'simple-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/simple-page.yml',
+            'missing-file' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/does-not-exist.yml',
+        ]);
+        Config::modify()->set(FixtureLoader::class, 'fixture_page_classes', [
+            E2eFixtureTestPage::class,
+        ]);
+
+        // A pre-existing E2E page a reset WOULD archive: an invalid path must be
+        // caught before reset, so this survives and the valid fixture is NOT loaded.
+        $existing = new E2eFixtureTestPage();
+        $existing->Title = 'Pre-existing';
+        $existing->URLSegment = 'e2e-preexisting';
+        $existing->write();
+
+        // Baseline instead of an absolute 0: SapphireTest's per-test DB isolation
+        // is not effective in this environment (verified: no START TRANSACTION /
+        // ROLLBACK is ever issued against the test DB across the whole run), so a
+        // sibling test's own 'simple-page' load can still be visible here. What
+        // M1 guarantees is that THIS call adds no further 'e2e-simple' page.
+        $simplePageCountBefore = count($this->draftPagesWithSegmentPrefix('e2e-simple'));
+
+        try {
+            FixtureLoader::create()->loadAll();
+            self::fail('Expected InvalidArgumentException for invalid fixture path');
+        } catch (InvalidArgumentException $invalidArgumentException) {
+            self::assertStringContainsString('Fixture file not found', $invalidArgumentException->getMessage());
+        }
+
+        self::assertCount(1, $this->draftPagesWithSegmentPrefix('e2e-preexisting'));
+        self::assertCount($simplePageCountBefore, $this->draftPagesWithSegmentPrefix('e2e-simple'));
+    }
+
     /**
      * @return array<int, SiteTree>
      */
