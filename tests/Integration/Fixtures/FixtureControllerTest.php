@@ -16,12 +16,14 @@ use SilverStripe\Dev\SapphireTest;
 use WeDevelop\E2e\Fixtures\FixtureController;
 use WeDevelop\E2e\Fixtures\FixtureLoader;
 use WeDevelop\E2e\Tests\Support\E2eFixtureTestPage;
+use WeDevelop\E2e\Tests\Support\E2eVersionedObject;
 
 #[CoversClass(FixtureController::class)]
 final class FixtureControllerTest extends SapphireTest
 {
     protected static $extra_dataobjects = [
         E2eFixtureTestPage::class,
+        E2eVersionedObject::class,
     ];
 
     private string $originalEnvironment = '';
@@ -98,6 +100,23 @@ final class FixtureControllerTest extends SapphireTest
         self::assertInstanceOf(HTTPResponse::class, $response);
         self::assertSame(400, $response->getStatusCode());
         self::assertStringContainsString('Unknown fixture', (string) $response->getBody());
+    }
+
+    public function testLoadReturnsJsonErrorWhenFixtureCreatesNoSiteTree(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'fixtures', [
+            'no-sitetree' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/no-sitetree.yml',
+        ]);
+
+        $response = $this->dispatch('POST', 'load', ['fixture' => 'no-sitetree']);
+
+        self::assertInstanceOf(HTTPResponse::class, $response);
+        self::assertSame(500, $response->getStatusCode());
+
+        /** @var array{success: bool, error: string} $body */
+        $body = json_decode((string) $response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+        self::assertFalse($body['success']);
+        self::assertStringContainsString('did not create any SiteTree', $body['error']);
     }
 
     public function testResetWithConfirmReturnsSuccess(): void
