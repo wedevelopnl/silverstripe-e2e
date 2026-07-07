@@ -10,7 +10,7 @@ Add a path alias in the project's `tsconfig.json` (or `tests/E2E/tsconfig.json`)
 {
   "compilerOptions": {
     "paths": {
-      "@wedevelop/e2e": ["vendor/wedevelopnl/silverstripe-e2e/client/index.ts"]
+      "@wedevelop/e2e": ["vendor/wedevelopnl/silverstripe-e2e/client/playwright/index.ts"]
     }
   }
 }
