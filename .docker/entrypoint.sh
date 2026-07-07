@@ -14,6 +14,6 @@ composer vendor-expose
 
 vendor/bin/sake dev/build flush=1
 
-touch /tmp/.app-ready
-
+# Readiness is probed by the compose healthcheck via a real TLS handshake to :443
+# (see .docker/compose.yml) — no sentinel file, so a crashed server can't read healthy.
 exec frankenphp run --config /etc/caddy/Caddyfile
