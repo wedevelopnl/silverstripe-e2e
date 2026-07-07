@@ -35,6 +35,7 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: ./.github/actions/setup-docker-mirror
+      - run: task docker-env
       - name: Build image (GHA layer cache)
         run: $COMPOSE build app
       - name: Start services
@@ -77,6 +78,7 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: ./.github/actions/setup-docker-mirror
+      - run: task docker-env
       - name: Build image (GHA layer cache)
         run: $COMPOSE build app
       - name: Start services
