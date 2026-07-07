@@ -91,6 +91,25 @@ final class FixturePostActionApplyTest extends SapphireTest
             ->apply($record);
     }
 
+    public function testAttachImageThrowsWhenSourceFileIsMissing(): void
+    {
+        $record = new E2eUnversionedObject();
+        $record->write();
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Image file not found');
+
+        (new FixturePostAction(
+            'attach_image',
+            E2eUnversionedObject::class,
+            'x',
+            [
+                'relation' => 'Image',
+                'source' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/assets/missing-image.png',
+            ],
+        ))->apply($record);
+    }
+
     public function testVersionedActionOnUnversionedRecordThrows(): void
     {
         $record = new E2eUnversionedObject();

@@ -1,0 +1,4 @@
+WeDevelop\E2e\Tests\Support\E2eOtherTestPage:
+  page1:
+    Title: 'E2E Fallback Page'
+    URLSegment: 'e2e-fallback'
