@@ -15,8 +15,8 @@ test('loads a fixture over HTTP and returns the created page id', async ({ reque
   expect(result.fixtureMap.Page).toBeDefined();
 });
 
-test('navigates to the loaded page in the CMS', async ({ page, request }) => {
-  const result = await fixtures.loadAndNavigate(page, request, 'demo-home');
+test('navigates to the loaded page in the CMS', async ({ page }) => {
+  const result = await fixtures.loadAndNavigate(page, 'demo-home');
 
   await expect(page).toHaveURL(new RegExp(`/admin/pages/edit/show/${result.pageId}`));
   await expect(page.getByText('E2E Home').first()).toBeVisible();

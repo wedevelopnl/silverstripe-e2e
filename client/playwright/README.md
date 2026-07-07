@@ -2,6 +2,16 @@
 
 Reusable Playwright helpers for the `wedevelopnl/silverstripe-e2e` fixture endpoint.
 
+## Requirements
+
+The client ships only as a source file inside the Composer package
+(`vendor/wedevelopnl/silverstripe-e2e/client/playwright/index.ts`) — it is not
+published to npm. The machine that runs Playwright must therefore have the
+module's Composer dependencies installed (i.e. `vendor/` present), even when the
+application's PHP otherwise runs entirely inside Docker. In CI, run `composer
+install` on the Playwright runner (or mount the container's `vendor/`) before
+`playwright test`.
+
 ## Usage in a consuming project
 
 Add a path alias in the project's `tsconfig.json` (or `tests/E2E/tsconfig.json`):
@@ -34,10 +44,21 @@ import { createFixtureClient } from '@wedevelop/e2e';
 
 const fixtures = createFixtureClient(); // defaults to /dev/e2e-fixtures
 
-test('...', async ({ page, request }) => {
-  const { pageId } = await fixtures.loadAndNavigate(page, request, 'my-fixture');
+test('...', async ({ page }) => {
+  // `request` defaults to `page.request` (shares the page's auth cookies); pass
+  // an explicit APIRequestContext as the third argument to override.
+  const { pageId } = await fixtures.loadAndNavigate(page, 'my-fixture');
   // ...
 });
+```
+
+`loadAndNavigate` is a convenience wrapper for the common case of editing the
+loaded record on the CMS pages screen (`/admin/pages/edit/show/{pageId}`). To
+navigate elsewhere, compose the pieces directly:
+
+```ts
+const { pageId } = await fixtures.load(request, 'my-fixture');
+await page.goto(`/admin/some-other-section/${pageId}`);
 ```
 
 The `/dev/e2e-fixtures` endpoint and the `strict_user_agent_check` relaxation are
