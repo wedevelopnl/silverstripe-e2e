@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
       args:
         PHP_VERSION: ${PHP_VERSION:-8.3}
+    ports:
+      - "${WEB_PORT}:443"
     volumes:
       - ../composer.json:/module/composer.json:ro
       - ../src:/module/src
@@ -32,10 +34,12 @@ services:
 
   db:
     image: mysql:8
+    ports:
+      - "${DB_PORT}:3306"
     volumes:
       - db-data:/var/lib/mysql
-      # Grants the app user access to SapphireTest's ss_tmpdb_* throwaway databases.
-      # Runs on first init of a fresh data volume (see db-init/01-grant-tmpdb.sql).
+      # Grants the app user access to SapphireTest's ss_tmpdb_* throwaway databases
+      # (added in Task 1; runs on first init of a fresh data volume). MUST be kept.
       - ./db-init:/docker-entrypoint-initdb.d:ro
     environment:
       MYSQL_DATABASE: silverstripe

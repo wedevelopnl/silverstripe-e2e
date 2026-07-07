@@ -7,8 +7,14 @@ vars:
   COMPOSE: docker compose -f .docker/compose.yml
 
 tasks:
+  docker-env:
+    desc: Generate deterministic per-worktree ports in .docker/.env
+    cmds: [.docker/env.sh]
+    status: [test -f .docker/.env]
+
   up:
     desc: Start services (build if needed)
+    deps: [docker-env]
     cmds:
       - "{{.COMPOSE}} up -d --build --wait"
 
@@ -29,6 +35,7 @@ tasks:
 
   ensure-up:
     desc: Ensure services are running and ready
+    deps: [docker-env]
     cmds:
       - "{{.COMPOSE}} exec app true 2>/dev/null || {{.COMPOSE}} up -d --build --wait"
 
