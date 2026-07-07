@@ -205,6 +205,93 @@ final class FixtureLoaderTest extends SapphireTest
         FixtureLoader::create()->load('bad-postaction');
     }
 
+    public function testLoadAllLoadsEveryConfiguredFixtureInOrder(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'fixtures', [
+            'simple-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/simple-page.yml',
+            'fallback-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/fallback-page.yml',
+        ]);
+        Config::modify()->set(FixtureLoader::class, 'fixture_page_classes', [
+            E2eFixtureTestPage::class,
+            E2eOtherTestPage::class,
+        ]);
+
+        $results = FixtureLoader::create()->loadAll();
+
+        self::assertSame(['simple-page', 'fallback-page'], array_keys($results));
+        self::assertGreaterThan(0, $results['simple-page']->pageId);
+        self::assertGreaterThan(0, $results['fallback-page']->pageId);
+        self::assertSame('simple-page', $results['simple-page']->fixtureName);
+    }
+
+    public function testLoadAllResetsOnceSoFixturesCoexist(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'fixtures', [
+            'simple-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/simple-page.yml',
+            'fallback-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/fallback-page.yml',
+        ]);
+        // Both classes are reset-eligible: if reset ran per-fixture, loading the
+        // second fixture would archive the first. Coexistence proves reset ran once.
+        Config::modify()->set(FixtureLoader::class, 'fixture_page_classes', [
+            E2eFixtureTestPage::class,
+            E2eOtherTestPage::class,
+        ]);
+
+        FixtureLoader::create()->loadAll();
+
+        self::assertCount(1, $this->draftPagesWithSegmentPrefix('e2e-simple'));
+        self::assertCount(1, $this->draftPagesWithSegmentPrefix('e2e-fallback'));
+    }
+
+    public function testLoadAllThrowsAndDoesNotResetWhenNoFixturesConfigured(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'fixtures', []);
+        Config::modify()->set(FixtureLoader::class, 'fixture_page_classes', [
+            E2eFixtureTestPage::class,
+        ]);
+
+        // A pre-existing E2E page a reset WOULD archive; it must survive the throw.
+        $existing = new E2eFixtureTestPage();
+        $existing->Title = 'Pre-existing';
+        $existing->URLSegment = 'e2e-preexisting';
+        $existing->write();
+
+        try {
+            FixtureLoader::create()->loadAll();
+            self::fail('Expected InvalidArgumentException for empty fixtures config');
+        } catch (InvalidArgumentException $invalidArgumentException) {
+            self::assertStringContainsString('No fixtures', $invalidArgumentException->getMessage());
+        }
+
+        self::assertCount(1, $this->draftPagesWithSegmentPrefix('e2e-preexisting'));
+    }
+
+    public function testLoadAllIsFailFastWhenAFixtureCreatesNoSiteTree(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'fixtures', [
+            'simple-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/simple-page.yml',
+            'broken' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/no-sitetree.yml',
+        ]);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('did not create any SiteTree');
+
+        FixtureLoader::create()->loadAll();
+    }
+
+    public function testLoadAllIsFailFastWhenAFixturePathIsInvalid(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'fixtures', [
+            'simple-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/simple-page.yml',
+            'missing-file' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/does-not-exist.yml',
+        ]);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Fixture file not found');
+
+        FixtureLoader::create()->loadAll();
+    }
+
     /**
      * @return array<int, SiteTree>
      */
