@@ -66,7 +66,7 @@ class FixtureLoader
     private static array $fixtures = [];
 
     /**
-     * Load a named fixture into the database.
+     * Load a single named fixture into the database.
      *
      * Resets existing E2E data first for idempotency, then writes the YAML,
      * applies any post-actions, and returns the page ID and full fixture map.
@@ -75,9 +75,55 @@ class FixtureLoader
      */
     public function load(string $name): FixtureResult
     {
+        // Resolve/validate before resetting so an unknown name cannot wipe data.
         $path = $this->resolveFixturePath($name);
         $this->reset();
 
+        return $this->loadFixtureFromPath($name, $path);
+    }
+
+    /**
+     * Reset once, then load every configured fixture additively.
+     *
+     * Each fixture is written into its own factory (no shared identifier scope,
+     * so fixtures cannot cross-reference one another). Fail-fast: the first
+     * fixture that raises aborts the loop, leaving a partial seed that the next
+     * load() / loadAll() resets again.
+     *
+     * @return array<string, FixtureResult> Fixture name => result, in config order.
+     * @throws InvalidArgumentException when no fixtures are configured (before any
+     *         reset) or a fixture name/path is invalid.
+     * @throws RuntimeException when a fixture creates no SiteTree records.
+     */
+    public function loadAll(): array
+    {
+        $names = $this->getAvailableFixtures();
+        if ($names === []) {
+            throw new InvalidArgumentException(
+                'No fixtures are configured; nothing to load.',
+            );
+        }
+
+        $this->reset();
+
+        $results = [];
+        foreach ($names as $name) {
+            /** @var non-empty-string $name */
+            $path = $this->resolveFixturePath($name);
+            $results[$name] = $this->loadFixtureFromPath($name, $path);
+        }
+
+        return $results;
+    }
+
+    /**
+     * Write one already-resolved fixture into a fresh factory. Shared by
+     * {@see load()} and {@see loadAll()}; callers are responsible for resetting.
+     *
+     * @param non-empty-string $name
+     */
+    private function loadFixtureFromPath(string $name, string $path): FixtureResult
+    {
         $factory = new FixtureFactory();
         // Extensible::extend() takes its arguments by reference (&...$arguments),
         // which makes PHPStan widen every passed variable to the union of all of
