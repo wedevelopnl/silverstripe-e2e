@@ -1,0 +1,7 @@
+WeDevelop\E2e\Tests\Support\E2eFixtureTestPage:
+  page1:
+    Title: 'E2E Post Action Page'
+    URLSegment: 'e2e-post'
+WeDevelop\E2e\Tests\Support\E2eVersionedObject:
+  obj1:
+    Title: 'Needs publish'
