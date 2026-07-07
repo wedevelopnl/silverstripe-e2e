@@ -1,0 +1,11 @@
+---
+Name: e2e-fixtures
+Only:
+  environment: dev
+---
+SilverStripe\Dev\DevelopmentAdmin:
+  controllers:
+    e2e-fixtures:
+      controller: WeDevelop\E2e\Fixtures\FixtureController
+SilverStripe\Control\Session:
+  strict_user_agent_check: false

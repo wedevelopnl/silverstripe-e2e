@@ -1,0 +1,143 @@
+<?php
+
+declare(strict_types=1);
+
+namespace WeDevelop\E2e\Tests\Integration\Fixtures;
+
+use PHPUnit\Framework\Attributes\CoversClass;
+use SilverStripe\Control\HTTPRequest;
+use SilverStripe\Control\HTTPResponse;
+use SilverStripe\Control\HTTPResponse_Exception;
+use SilverStripe\Control\Session;
+use SilverStripe\Core\Config\Config;
+use SilverStripe\Core\Injector\Injector;
+use SilverStripe\Core\Kernel;
+use SilverStripe\Dev\SapphireTest;
+use WeDevelop\E2e\Fixtures\FixtureController;
+use WeDevelop\E2e\Fixtures\FixtureLoader;
+use WeDevelop\E2e\Tests\Support\E2eFixtureTestPage;
+
+#[CoversClass(FixtureController::class)]
+final class FixtureControllerTest extends SapphireTest
+{
+    protected static $extra_dataobjects = [
+        E2eFixtureTestPage::class,
+    ];
+
+    private string $originalEnvironment = '';
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $kernel = Injector::inst()->get(Kernel::class);
+        $this->originalEnvironment = $kernel->getEnvironment();
+        $kernel->setEnvironment('dev');
+
+        Config::modify()->set(FixtureLoader::class, 'fixtures', [
+            'simple-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/simple-page.yml',
+        ]);
+        Config::modify()->set(FixtureLoader::class, 'fixture_page_classes', [
+            E2eFixtureTestPage::class,
+        ]);
+    }
+
+    protected function tearDown(): void
+    {
+        Injector::inst()->get(Kernel::class)->setEnvironment($this->originalEnvironment);
+
+        parent::tearDown();
+    }
+
+    /**
+     * @param array<string, string> $postVars
+     * @param array<string, string> $getVars
+     */
+    private function dispatch(string $method, string $url, array $postVars = [], array $getVars = []): HTTPResponse|HTTPResponse_Exception
+    {
+        $request = new HTTPRequest($method, $url, $getVars, $postVars);
+        $request->setSession(new Session([]));
+
+        try {
+            return FixtureController::create()->handleRequest($request);
+        } catch (HTTPResponse_Exception $exception) {
+            return $exception;
+        }
+    }
+
+    public function testLoadReturnsSuccessJson(): void
+    {
+        $response = $this->dispatch('POST', 'load', ['fixture' => 'simple-page']);
+
+        self::assertInstanceOf(HTTPResponse::class, $response);
+        self::assertSame(200, $response->getStatusCode());
+
+        /** @var array{success: bool, fixture: string, data: array<string, mixed>} $body */
+        $body = json_decode((string) $response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+        self::assertTrue($body['success']);
+        self::assertSame('simple-page', $body['fixture']);
+        self::assertArrayHasKey('pageId', $body['data']);
+    }
+
+    public function testLoadWithoutFixtureParamReturns400(): void
+    {
+        $response = $this->dispatch('POST', 'load');
+
+        self::assertInstanceOf(HTTPResponse::class, $response);
+        self::assertSame(400, $response->getStatusCode());
+        // The message reads `Missing required "fixture" parameter`, but the raw JSON
+        // body escapes the inner quotes (`\"fixture\"`), so assert on the unquoted
+        // stem that survives JSON encoding.
+        self::assertStringContainsString('Missing required', (string) $response->getBody());
+    }
+
+    public function testLoadUnknownFixtureReturns400(): void
+    {
+        $response = $this->dispatch('POST', 'load', ['fixture' => 'nope']);
+
+        self::assertInstanceOf(HTTPResponse::class, $response);
+        self::assertSame(400, $response->getStatusCode());
+        self::assertStringContainsString('Unknown fixture', (string) $response->getBody());
+    }
+
+    public function testResetWithConfirmReturnsSuccess(): void
+    {
+        $response = $this->dispatch('POST', 'reset', [], ['confirm' => '1']);
+
+        self::assertInstanceOf(HTTPResponse::class, $response);
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    public function testResetWithoutConfirmReturns400(): void
+    {
+        $response = $this->dispatch('POST', 'reset');
+
+        self::assertInstanceOf(HTTPResponse::class, $response);
+        self::assertSame(400, $response->getStatusCode());
+        self::assertStringContainsString('confirm=1', (string) $response->getBody());
+    }
+
+    public function testNonDevRequestReturns404(): void
+    {
+        Injector::inst()->get(Kernel::class)->setEnvironment('live');
+
+        $response = $this->dispatch('POST', 'load', ['fixture' => 'simple-page']);
+
+        self::assertInstanceOf(HTTPResponse_Exception::class, $response);
+        self::assertSame(404, $response->getResponse()->getStatusCode());
+    }
+
+    /**
+     * canInit() is layer 1 of the security posture: DevelopmentAdmin consults it
+     * before exposing the route. It is not reached by the isolated handleRequest
+     * harness, so cover the dev gate directly.
+     */
+    public function testCanInitReflectsDevEnvironment(): void
+    {
+        self::assertTrue(FixtureController::create()->canInit());
+
+        Injector::inst()->get(Kernel::class)->setEnvironment('live');
+
+        self::assertFalse(FixtureController::create()->canInit());
+    }
+}
