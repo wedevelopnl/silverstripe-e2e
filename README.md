@@ -27,3 +27,93 @@ Run the task without a database:
 `vendor/bin/sake tasks:generate-tinymce-combined --no-database`
 
 It is also available via the browser at `/dev/tasks/generate-tinymce-combined`.
+
+## Runtime fixtures for E2E tests
+The module ships a dev-gated HTTP endpoint that lets a Playwright suite seed the
+database from a named YAML fixture before each test. On request it loads the
+fixture through SilverStripe's `FixtureFactory`, applies any versioned
+post-actions declared in the fixture, and returns the created record IDs as JSON
+so specs can navigate straight to the records they need. State is reset between
+requests, so every test starts from a known baseline.
+
+The endpoint, the `FixtureLoader`, and the Playwright client are all provided by
+this module. A consuming project only supplies its own fixtures and a small
+dev-only configuration block.
+
+### Registering fixtures
+Register your fixtures and the page classes the loader is allowed to resolve in a
+dev-only config fragment (`Only: environment: dev`), so the endpoint is never
+active outside development/CI:
+
+```yaml
+---
+Name: app-e2e-fixtures
+Only:
+  environment: dev
+---
+WeDevelop\E2e\Fixtures\FixtureLoader:
+  fixture_page_classes:
+    - Page
+  fixtures:
+    my-fixture: 'my-vendor/my-module:tests/E2E/Fixture/my-fixture.yml'
+```
+
+`fixture_page_classes` is an allowlist: the loader resolves the page to navigate
+to by walking these classes in the order listed. `fixtures` maps the name used by
+the Playwright client to a module-relative path of the fixture YAML.
+
+### Extension hooks
+To inject domain behavior around a load — for example suppressing model
+auto-scaffolding or publishing extra records — add an `Extension` implementing
+either hook and wire it via `WeDevelop\E2e\Fixtures\FixtureLoader.extensions`:
+
+```php
+public function onBeforeLoad(string $name, FixtureFactory $factory): void
+{
+    // Prepare state or the factory before the fixture is loaded.
+}
+
+public function onAfterLoad(FixtureResult $result): void
+{
+    // React to the loaded records (IDs, page id) after the fixture is applied.
+}
+```
+
+```yaml
+WeDevelop\E2e\Fixtures\FixtureLoader:
+  extensions:
+    - My\Module\E2e\MyFixtureExtension
+```
+
+### The endpoint
+When installed, the module registers the `/dev/e2e-fixtures` endpoint
+automatically (dev-only, via `SilverStripe\Dev\DevelopmentAdmin`) and relaxes
+`SilverStripe\Control\Session.strict_user_agent_check` so the Playwright browser
+context can drive it. Both are scoped to `environment: dev`.
+
+### TypeScript client
+A reusable Playwright client lives at `client/playwright/index.ts`. Expose it to
+your specs with a `paths` alias in the project's `tsconfig.json` (or
+`tests/E2E/tsconfig.json`):
+
+```jsonc
+{
+  "compilerOptions": {
+    "paths": {
+      "@wedevelop/e2e": ["vendor/wedevelopnl/silverstripe-e2e/client/playwright/index.ts"]
+    }
+  }
+}
+```
+
+Specs then `import { createFixtureClient, authenticateAdmin } from '@wedevelop/e2e'`.
+See [`client/playwright/README.md`](client/playwright/README.md) for the full
+client API and setup examples.
+
+### Running the E2E suite
+With the module's Docker services running, run the Playwright suite with:
+
+`task test-e2e`
+
+The task ensures the services are up first, then runs `npx playwright test`
+against the served app.
