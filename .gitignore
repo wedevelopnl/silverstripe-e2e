@@ -2,6 +2,9 @@
 composer.lock
 vendor/
 
+# Docker
+.docker/.env
+
 # PHPUnit / coverage
 .phpunit.cache/
 coverage/
