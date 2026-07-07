@@ -1,0 +1,5 @@
+Page:
+  home:
+    Title: 'E2E Home'
+    URLSegment: 'e2e-home'
+    Content: '<p>Loaded by the E2E fixture system.</p>'

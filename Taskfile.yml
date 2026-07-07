@@ -57,6 +57,12 @@ tasks:
     cmds:
       - "{{.COMPOSE}} exec app vendor/bin/phpunit --testsuite integration"
 
+  test-e2e:
+    desc: Run the Playwright E2E suite against the served app
+    deps: [ensure-up]
+    cmds:
+      - npx playwright test
+
   analyse:
     desc: Run PHPStan static analysis
     deps: [ensure-up]

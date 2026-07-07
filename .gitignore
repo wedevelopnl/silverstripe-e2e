@@ -8,3 +8,10 @@ vendor/
 # PHPUnit / coverage
 .phpunit.cache/
 coverage/
+
+# Node / Playwright
+node_modules/
+/test-results/
+/playwright-report/
+/playwright/.cache/
+tests/E2E/.auth/
