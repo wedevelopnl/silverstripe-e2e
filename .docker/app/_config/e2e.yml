@@ -1,0 +1,10 @@
+---
+Name: app-e2e-fixtures
+Only:
+  environment: dev
+---
+WeDevelop\E2e\Fixtures\FixtureLoader:
+  fixture_page_classes:
+    - Page
+  fixtures:
+    demo-home: 'wedevelopnl/silverstripe-e2e:tests/E2E/Fixture/demo.yml'
