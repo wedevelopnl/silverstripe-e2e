@@ -15,8 +15,7 @@
     }],
     "require": {
         "php": "^8.3",
-        "silverstripe/framework": "^6",
-        "silverstripe/htmleditor-tinymce": "^1.1"
+        "silverstripe/framework": "^6"
     },
     "require-dev": {
         "cambis/silverstan": "^2.1",
@@ -25,8 +24,12 @@
         "phpstan/phpstan-deprecation-rules": "^2.0",
         "phpunit/phpunit": "^11.3",
         "rregeer/phpunit-coverage-check": "^0.3",
+        "silverstripe/htmleditor-tinymce": "^1.1",
         "tomasvotruba/type-coverage": "^2.0",
         "wernerkrauss/silverstripe-rector": "^1.0"
+    },
+    "suggest": {
+        "silverstripe/htmleditor-tinymce": "Required only for the generate-tinymce-combined CI task; fixtures-only consumers do not need it (^1.1)."
     },
     "autoload": {
         "psr-4": {
