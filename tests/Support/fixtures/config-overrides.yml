@@ -1,0 +1,10 @@
+WeDevelop\E2e\Tests\Support\E2eFixtureTestPage:
+  page1:
+    Title: 'E2E Config Overrides Page'
+    URLSegment: 'e2e-config-overrides'
+WeDevelop\E2e\Tests\Support\E2eScaffoldingObject:
+  container1:
+    Title: 'container'
+WeDevelop\E2e\Tests\Support\E2eConfigProbeObject:
+  probe1:
+    Title: 'probe'

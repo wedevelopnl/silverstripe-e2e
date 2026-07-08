@@ -8,10 +8,12 @@ use InvalidArgumentException;
 use RuntimeException;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Control\Director;
+use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Config\Configurable;
 use SilverStripe\Core\Extensible;
 use SilverStripe\Core\Injector\Injectable;
 use SilverStripe\Core\Manifest\ModuleResourceLoader;
+use SilverStripe\Dev\FixtureBlueprint;
 use SilverStripe\Dev\FixtureFactory;
 use SilverStripe\Dev\YamlFixture;
 use SilverStripe\ORM\DataObject;
@@ -64,6 +66,24 @@ class FixtureLoader
      * @var array<string, string|array{path: string, post_actions?: list<array{action: string, class: string, identifier: string, fields?: array<string, string|int|float|bool>}>}>
      */
     private static array $fixtures = [];
+
+    /**
+     * Config statics to force on specific classes while fixtures are written.
+     *
+     * For each class, the given key/value pairs are applied via a
+     * FixtureBlueprint `beforeCreate` callback, so the override is set inside
+     * FixtureBlueprint's own Config::nest()/unnest() window and reverts once the
+     * record is written — it never leaks into normal app code.
+     *
+     * This is the declarative form of the common `onBeforeLoad` use case:
+     * suppressing write-time side effects (auto-scaffolding, auto-publishing,
+     * denormalisation hooks) whose trigger is a config static. Anything a static
+     * value cannot express (dynamic values, non-config side effects) still
+     * belongs in an `onBeforeLoad` extension.
+     *
+     * @var array<class-string, array<string, scalar>>
+     */
+    private static array $config_overrides = [];
 
     /**
      * Load a single named fixture into the database.
@@ -137,6 +157,10 @@ class FixtureLoader
     private function loadFixtureFromPath(string $name, string $path): FixtureResult
     {
         $factory = new FixtureFactory();
+        // Apply declarative config overrides before the onBeforeLoad hook so a
+        // consumer's dynamic extension can still override the same class (a later
+        // FixtureFactory::define() replaces an earlier blueprint for that class).
+        $this->applyConfigOverrides($factory);
         // Extensible::extend() takes its arguments by reference (&...$arguments),
         // which makes PHPStan widen every passed variable to the union of all of
         // them for the rest of the scope. Pass throwaway aliases so the typed
@@ -317,6 +341,30 @@ class FixtureLoader
         }
 
         return $absolutePath;
+    }
+
+    /**
+     * Register blueprints that force {@see $config_overrides} statics during the
+     * write of each targeted class.
+     *
+     * Each override is set from a `beforeCreate` callback, which FixtureBlueprint
+     * runs inside its own Config::nest()/unnest() window — so the value is live
+     * for that record's write only and is restored immediately afterwards.
+     */
+    private function applyConfigOverrides(FixtureFactory $factory): void
+    {
+        /** @var array<class-string, array<string, scalar>> $overrides */
+        $overrides = static::config()->get('config_overrides');
+
+        foreach ($overrides as $class => $settings) {
+            $blueprint = new FixtureBlueprint($class);
+            $blueprint->addCallback('beforeCreate', static function () use ($class, $settings): void {
+                foreach ($settings as $key => $value) {
+                    Config::modify()->set($class, $key, $value);
+                }
+            });
+            $factory->define($class, $blueprint);
+        }
     }
 
     /**
