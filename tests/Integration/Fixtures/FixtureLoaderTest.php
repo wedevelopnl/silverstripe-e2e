@@ -12,8 +12,10 @@ use SilverStripe\Core\Config\Config;
 use SilverStripe\Dev\SapphireTest;
 use SilverStripe\Versioned\Versioned;
 use WeDevelop\E2e\Fixtures\FixtureLoader;
+use WeDevelop\E2e\Tests\Support\E2eConfigProbeObject;
 use WeDevelop\E2e\Tests\Support\E2eFixtureTestPage;
 use WeDevelop\E2e\Tests\Support\E2eOtherTestPage;
+use WeDevelop\E2e\Tests\Support\E2eScaffoldingObject;
 use WeDevelop\E2e\Tests\Support\E2eVersionedObject;
 use WeDevelop\E2e\Tests\Support\LoaderHookSpy;
 
@@ -24,6 +26,8 @@ final class FixtureLoaderTest extends SapphireTest
         E2eFixtureTestPage::class,
         E2eOtherTestPage::class,
         E2eVersionedObject::class,
+        E2eScaffoldingObject::class,
+        E2eConfigProbeObject::class,
     ];
 
     protected function setUp(): void
@@ -37,6 +41,7 @@ final class FixtureLoaderTest extends SapphireTest
             E2eFixtureTestPage::class,
         ]);
         LoaderHookSpy::reset();
+        E2eConfigProbeObject::reset();
     }
 
     public function testLoadWritesFixtureAndReturnsResult(): void
@@ -325,6 +330,81 @@ final class FixtureLoaderTest extends SapphireTest
 
         self::assertCount(1, $this->draftPagesWithSegmentPrefix('e2e-preexisting'));
         self::assertCount($simplePageCountBefore, $this->draftPagesWithSegmentPrefix('e2e-simple'));
+    }
+
+    public function testConfigOverrideReachesRecordDuringWrite(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'fixtures', [
+            'config-overrides' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/config-overrides.yml',
+        ]);
+        Config::modify()->set(FixtureLoader::class, 'config_overrides', [
+            E2eConfigProbeObject::class => ['probe_alpha' => 'overridden'],
+        ]);
+
+        FixtureLoader::create()->load('config-overrides');
+
+        self::assertSame('overridden', E2eConfigProbeObject::$observed['probe_alpha']);
+    }
+
+    public function testConfigOverrideDoesNotLeakPastLoad(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'fixtures', [
+            'config-overrides' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/config-overrides.yml',
+        ]);
+        Config::modify()->set(FixtureLoader::class, 'config_overrides', [
+            E2eConfigProbeObject::class => ['probe_alpha' => 'overridden'],
+        ]);
+
+        FixtureLoader::create()->load('config-overrides');
+
+        // The override is scoped to each record's write by FixtureBlueprint's
+        // Config::nest()/unnest(); normal app code sees the declared default.
+        self::assertSame('default', Config::inst()->get(E2eConfigProbeObject::class, 'probe_alpha'));
+    }
+
+    public function testConfigOverridesApplyMultipleClassesAndKeys(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'fixtures', [
+            'config-overrides' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/config-overrides.yml',
+        ]);
+        Config::modify()->set(FixtureLoader::class, 'config_overrides', [
+            E2eScaffoldingObject::class => ['auto_scaffold' => false],
+            E2eConfigProbeObject::class => [
+                'probe_alpha' => 'alpha-override',
+                'probe_beta' => 'beta-override',
+            ],
+        ]);
+
+        $childrenBefore = $this->countScaffoldChildren();
+
+        FixtureLoader::create()->load('config-overrides');
+
+        // auto_scaffold=false suppressed the child on E2eScaffoldingObject...
+        self::assertSame($childrenBefore, $this->countScaffoldChildren());
+        // ...and both keys on the second class took effect at write time.
+        self::assertSame('alpha-override', E2eConfigProbeObject::$observed['probe_alpha']);
+        self::assertSame('beta-override', E2eConfigProbeObject::$observed['probe_beta']);
+    }
+
+    public function testAbsentConfigOverridesIsNoOp(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'fixtures', [
+            'config-overrides' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/config-overrides.yml',
+        ]);
+        // No config_overrides configured (default []): the model's own
+        // auto_scaffold default (true) stands and its config statics are untouched.
+        $childrenBefore = $this->countScaffoldChildren();
+
+        FixtureLoader::create()->load('config-overrides');
+
+        self::assertSame($childrenBefore + 1, $this->countScaffoldChildren());
+        self::assertSame('default', E2eConfigProbeObject::$observed['probe_alpha']);
+        self::assertSame('default', E2eConfigProbeObject::$observed['probe_beta']);
+    }
+
+    private function countScaffoldChildren(): int
+    {
+        return (int) E2eScaffoldingObject::get()->filter('Title', 'scaffolded-container')->count();
     }
 
     /**

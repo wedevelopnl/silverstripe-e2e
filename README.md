@@ -62,10 +62,30 @@ WeDevelop\E2e\Fixtures\FixtureLoader:
 to by walking these classes in the order listed. `fixtures` maps the name used by
 the Playwright client to a module-relative path of the fixture YAML.
 
+### Config overrides during load
+The most common write-time customisation is suppressing a side effect whose
+trigger is a config static — e.g. a container model that auto-scaffolds children
+in `onAfterWrite()` and would duplicate children the fixture declares itself.
+For that case declare the statics to force per class; each is applied only while
+the record is written and reverts immediately afterwards (it never leaks into
+normal app code):
+
+```yaml
+WeDevelop\E2e\Fixtures\FixtureLoader:
+  config_overrides:
+    My\Module\Model\Section:
+      auto_scaffold: false
+    My\Module\Model\Row:
+      auto_scaffold: false
+```
+
+Reach for an `onBeforeLoad` extension (below) only when a static value can't
+express it — dynamic values or non-config side effects.
+
 ### Extension hooks
-To inject domain behavior around a load — for example suppressing model
-auto-scaffolding or publishing extra records — add an `Extension` implementing
-either hook and wire it via `WeDevelop\E2e\Fixtures\FixtureLoader.extensions`:
+To inject domain behavior around a load — for example computing dynamic values or
+publishing extra records — add an `Extension` implementing either hook and wire
+it via `WeDevelop\E2e\Fixtures\FixtureLoader.extensions`:
 
 ```php
 public function onBeforeLoad(string $name, FixtureFactory $factory): void
