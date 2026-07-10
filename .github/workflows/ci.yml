@@ -140,7 +140,7 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         id: playwright-cache
         with:
           path: ~/.cache/ms-playwright
@@ -150,7 +150,7 @@ jobs:
       - if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps ${{ matrix.browser }}
       - if: steps.playwright-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ matrix.browser }}-${{ hashFiles('package-lock.json') }}
