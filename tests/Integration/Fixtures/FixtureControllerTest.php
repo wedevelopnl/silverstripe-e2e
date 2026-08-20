@@ -44,6 +44,10 @@ final class FixtureControllerTest extends SapphireTest
         Config::modify()->set(FixtureLoader::class, 'fixture_page_classes', [
             E2eFixtureTestPage::class,
         ]);
+        Config::modify()->set(FixtureLoader::class, 'purge_classes', [
+            E2eFixtureTestPage::class,
+            E2eOtherTestPage::class,
+        ]);
     }
 
     protected function tearDown(): void

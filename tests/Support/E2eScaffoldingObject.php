@@ -24,6 +24,26 @@ class E2eScaffoldingObject extends DataObject implements TestOnly
         'Title' => 'Varchar(255)',
     ];
 
+    /** @var array<string, class-string> */
+    private static array $has_one = [
+        'Container' => self::class,
+    ];
+
+    /** @var array<string, string> */
+    private static array $has_many = [
+        'Scaffolded' => self::class . '.Container',
+    ];
+
+    /**
+     * Deleting a container takes the child it scaffolded with it, so a purge of
+     * this class deletes records the same query already returned.
+     *
+     * @var list<string>
+     */
+    private static array $cascade_deletes = [
+        'Scaffolded',
+    ];
+
     /**
      * When true, writing this object scaffolds one child. Consumers suppress
      * this during fixture loads via FixtureLoader.config_overrides.
@@ -53,6 +73,7 @@ class E2eScaffoldingObject extends DataObject implements TestOnly
         $child = new self();
         $child->markAsScaffoldChild();
         $child->Title = 'scaffolded-' . $this->Title;
+        $child->ContainerID = $this->ID;
         $child->write();
     }
 }

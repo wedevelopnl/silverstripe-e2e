@@ -38,24 +38,37 @@ class FixtureLoader
     use Extensible;
 
     /**
-     * URLSegment prefix marking a page as E2E-owned. {@see reset()} only
-     * archives pages whose segment starts with this AND whose ClassName is in
-     * {@see $fixture_page_classes}.
-     */
-    private static string $url_segment_prefix = 'e2e-';
-
-    /**
-     * SiteTree ClassNames the fixtures may create and reset.
+     * SiteTree ClassNames the loader prefers when resolving the page a fixture
+     * load should navigate to.
      *
-     * {@see reset()} archives a page only when its ClassName matches one of
-     * these AND its URLSegment starts with {@see $url_segment_prefix}. The
-     * prefix alone is too weak an ownership marker on a shared dev DB. Empty by
-     * default: reset() refuses to run until a consumer declares its page
-     * classes, so it can never wipe pages it does not own.
+     * {@see findPageInFactory()} walks this list in order and falls back to the
+     * first SiteTree subclass the fixture created, so this is a preference, not
+     * an allowlist. Cleanup is governed by {@see $purge_classes}.
      *
      * @var list<class-string<SiteTree>>
      */
     private static array $fixture_page_classes = [];
+
+    /**
+     * Classes whose entire contents belong to E2E and {@see reset()} deletes.
+     *
+     * Ownership is declared here, not inferred from the data. reset() removes
+     * EVERY record of these classes on both stages, however it was created:
+     * fixture-written records, records a spec produced by driving the CMS, and
+     * debris from an earlier crashed run alike. Listing a class therefore
+     * declares its contents disposable, so the E2E database must be one nobody
+     * minds losing.
+     *
+     * List base classes — subclasses come along, so `Page` also purges an
+     * `ErrorPage`. Never list identity or configuration classes: purging
+     * `Member` takes the admin account the Playwright session logs in with.
+     *
+     * Empty by default: reset() refuses to run until a consumer declares its
+     * scope, so it can never wipe data nobody put in its charge.
+     *
+     * @var list<class-string<DataObject>>
+     */
+    private static array $purge_classes = [];
 
     /**
      * Map of fixture names to YAML paths or config arrays.
@@ -217,36 +230,77 @@ class FixtureLoader
     }
 
     /**
-     * Archive all E2E fixture pages (draft + live) via doArchive().
+     * Delete every record of the configured {@see $purge_classes}, both stages.
      *
-     * @throws RuntimeException if no fixture page classes are configured.
+     * @throws RuntimeException if no purge classes are configured.
      */
     public function reset(): void
     {
-        /** @var list<class-string<SiteTree>> $pageClasses */
-        $pageClasses = static::config()->get('fixture_page_classes');
-        if ($pageClasses === []) {
+        /** @var list<class-string<DataObject>> $purgeClasses */
+        $purgeClasses = static::config()->get('purge_classes');
+        if ($purgeClasses === []) {
             throw new RuntimeException(
-                'FixtureLoader.fixture_page_classes is empty; refusing to reset. Configure the '
-                . 'SiteTree classes your fixtures create before loading or resetting fixtures.',
+                'FixtureLoader.purge_classes is empty; refusing to reset. Configure the classes '
+                . 'your E2E database owns before loading or resetting fixtures.',
             );
         }
 
-        /** @var string $prefix */
-        $prefix = static::config()->get('url_segment_prefix');
-
-        Versioned::withVersionedMode(static function () use ($pageClasses, $prefix): void {
+        Versioned::withVersionedMode(function () use ($purgeClasses): void {
             Versioned::set_stage(Versioned::DRAFT);
+            foreach ($purgeClasses as $class) {
+                $this->archiveDraftRecords($class);
+            }
 
-            $pages = SiteTree::get()->filter([
-                'URLSegment:StartsWith' => $prefix,
-                'ClassName' => $pageClasses,
-            ]);
-
-            foreach ($pages as $page) {
-                $page->doArchive();
+            Versioned::set_stage(Versioned::LIVE);
+            foreach ($purgeClasses as $class) {
+                $this->deleteLiveRemainders($class);
             }
         });
+    }
+
+    /**
+     * Remove every record of $class that the draft stage can see.
+     *
+     * The list is materialised first: the loop deletes rows out of the very
+     * result set it walks, and one record's $cascade_deletes can take another
+     * the same query returned. Deleting a record twice is a no-op, so a record
+     * already carried off by a cascade needs no special handling.
+     *
+     * @param class-string<DataObject> $class
+     */
+    private function archiveDraftRecords(string $class): void
+    {
+        foreach (DataObject::get($class)->toArray() as $record) {
+            if ($record->hasExtension(Versioned::class)) {
+                /** @var DataObject&Versioned $record */
+                // Clears draft AND live at once, carrying $cascade_deletes with it.
+                $record->doArchive();
+
+                continue;
+            }
+
+            $record->delete();
+        }
+    }
+
+    /**
+     * Remove records of $class that survive only on live.
+     *
+     * A record whose draft row was deleted without an unpublish still serves
+     * from the live stage, where no draft query can reach it — so the pass
+     * above leaves it behind and nothing else ever collects it.
+     *
+     * @param class-string<DataObject> $class
+     */
+    private function deleteLiveRemainders(string $class): void
+    {
+        foreach (DataObject::get($class)->toArray() as $record) {
+            // Unversioned classes have no live stage; the draft pass took them.
+            if ($record->hasExtension(Versioned::class)) {
+                /** @var DataObject&Versioned $record */
+                $record->deleteFromStage(Versioned::LIVE);
+            }
+        }
     }
 
     /**

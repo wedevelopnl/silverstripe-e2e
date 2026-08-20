@@ -50,6 +50,10 @@ final class LoadFixturesTaskTest extends SapphireTest
         Config::modify()->set(FixtureLoader::class, 'fixture_page_classes', [
             E2eFixtureTestPage::class,
         ]);
+        Config::modify()->set(FixtureLoader::class, 'purge_classes', [
+            E2eFixtureTestPage::class,
+            E2eOtherTestPage::class,
+        ]);
     }
 
     protected function tearDown(): void
@@ -149,10 +153,10 @@ final class LoadFixturesTaskTest extends SapphireTest
 
     public function testResetRefusalIsReportedAsFailure(): void
     {
-        // reset() refuses when no fixture_page_classes are configured; the loader
+        // reset() refuses when no purge_classes are configured; the loader
         // raises a RuntimeException, which the task surfaces as a hard failure
         // (distinct from the INVALID exit used for bad input).
-        Config::modify()->set(FixtureLoader::class, 'fixture_page_classes', []);
+        Config::modify()->set(FixtureLoader::class, 'purge_classes', []);
 
         [$exitCode, $output] = $this->runTask('simple-page');
 

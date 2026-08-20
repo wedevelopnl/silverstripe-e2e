@@ -10,12 +10,14 @@ use RuntimeException;
 use SilverStripe\CMS\Model\SiteTree;
 use SilverStripe\Core\Config\Config;
 use SilverStripe\Dev\SapphireTest;
+use SilverStripe\ORM\DataObject;
 use SilverStripe\Versioned\Versioned;
 use WeDevelop\E2e\Fixtures\FixtureLoader;
 use WeDevelop\E2e\Tests\Support\E2eConfigProbeObject;
 use WeDevelop\E2e\Tests\Support\E2eFixtureTestPage;
 use WeDevelop\E2e\Tests\Support\E2eOtherTestPage;
 use WeDevelop\E2e\Tests\Support\E2eScaffoldingObject;
+use WeDevelop\E2e\Tests\Support\E2eUnversionedObject;
 use WeDevelop\E2e\Tests\Support\E2eVersionedObject;
 use WeDevelop\E2e\Tests\Support\LoaderHookSpy;
 
@@ -26,6 +28,7 @@ final class FixtureLoaderTest extends SapphireTest
         E2eFixtureTestPage::class,
         E2eOtherTestPage::class,
         E2eVersionedObject::class,
+        E2eUnversionedObject::class,
         E2eScaffoldingObject::class,
         E2eConfigProbeObject::class,
     ];
@@ -38,6 +41,9 @@ final class FixtureLoaderTest extends SapphireTest
             'simple-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/simple-page.yml',
         ]);
         Config::modify()->set(FixtureLoader::class, 'fixture_page_classes', [
+            E2eFixtureTestPage::class,
+        ]);
+        Config::modify()->set(FixtureLoader::class, 'purge_classes', [
             E2eFixtureTestPage::class,
         ]);
         LoaderHookSpy::reset();
@@ -70,27 +76,143 @@ final class FixtureLoaderTest extends SapphireTest
         FixtureLoader::create()->load('missing');
     }
 
-    public function testResetArchivesOnlyAllowlistedPrefixedPages(): void
+    public function testResetRemovesEveryRecordOfAPurgedClass(): void
     {
         FixtureLoader::create()->load('simple-page');
 
-        $stray = new SiteTree();
-        $stray->Title = 'Human authored';
-        $stray->URLSegment = 'e2e-human';
-        $stray->write();
+        // No 'e2e-' prefix and not fixture-written: ownership follows the
+        // declared class, not a property of the record.
+        $handWritten = new E2eFixtureTestPage();
+        $handWritten->Title = 'Hand authored';
+        $handWritten->URLSegment = 'hand-authored';
+        $handWritten->write();
 
         FixtureLoader::create()->reset();
 
-        self::assertCount(0, $this->draftPagesWithSegmentPrefix('e2e-simple'));
-        self::assertCount(1, $this->draftPagesWithSegmentPrefix('e2e-human'));
+        self::assertSame(0, $this->draftCount(E2eFixtureTestPage::class));
     }
 
-    public function testResetThrowsWhenAllowlistEmpty(): void
+    public function testResetLeavesClassesOutsideThePurgeScope(): void
     {
-        Config::modify()->set(FixtureLoader::class, 'fixture_page_classes', []);
+        $stray = new E2eOtherTestPage();
+        $stray->Title = 'Out of scope';
+        $stray->URLSegment = 'e2e-out-of-scope';
+        $stray->write();
+
+        $before = $this->draftCount(E2eOtherTestPage::class);
+
+        FixtureLoader::create()->reset();
+
+        self::assertSame($before, $this->draftCount(E2eOtherTestPage::class));
+    }
+
+    public function testResetPurgesSubclassesOfAPurgedClass(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'purge_classes', [SiteTree::class]);
+
+        $page = new E2eFixtureTestPage();
+        $page->Title = 'In scope by base class';
+        $page->write();
+        $other = new E2eOtherTestPage();
+        $other->Title = 'Also in scope by base class';
+        $other->write();
+
+        FixtureLoader::create()->reset();
+
+        self::assertSame(0, $this->draftCount(SiteTree::class));
+    }
+
+    public function testResetRemovesVersionedRecordsThatHaveNoPage(): void
+    {
+        // The case a URLSegment-keyed reset can never see: a library record with
+        // no page and no URL, which every run would otherwise leave behind.
+        Config::modify()->set(FixtureLoader::class, 'purge_classes', [E2eVersionedObject::class]);
+
+        $object = new E2eVersionedObject();
+        $object->Title = 'Library record';
+        $object->write();
+        $object->publishSingle();
+        $id = (int) $object->ID;
+
+        FixtureLoader::create()->reset();
+
+        self::assertNull(Versioned::get_by_stage(E2eVersionedObject::class, Versioned::DRAFT)->byID($id));
+        self::assertNull(Versioned::get_by_stage(E2eVersionedObject::class, Versioned::LIVE)->byID($id));
+    }
+
+    public function testResetRemovesUnversionedRecords(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'purge_classes', [E2eUnversionedObject::class]);
+
+        $object = new E2eUnversionedObject();
+        $object->Title = 'Unversioned record';
+        $object->write();
+
+        FixtureLoader::create()->reset();
+
+        self::assertSame(0, E2eUnversionedObject::get()->count());
+    }
+
+    public function testResetRemovesRecordsThatSurviveOnlyOnLive(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'purge_classes', [E2eVersionedObject::class]);
+
+        $object = new E2eVersionedObject();
+        $object->Title = 'Dropped from draft while published';
+        $object->write();
+        $object->publishSingle();
+        $id = (int) $object->ID;
+        // Deleting the draft row without unpublishing leaves the record serving
+        // from live, out of reach of any draft-stage query.
+        $object->deleteFromStage(Versioned::DRAFT);
+
+        FixtureLoader::create()->reset();
+
+        self::assertNull(Versioned::get_by_stage(E2eVersionedObject::class, Versioned::LIVE)->byID($id));
+    }
+
+    public function testResetSurvivesRecordsCascadingIntoEachOther(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'purge_classes', [E2eScaffoldingObject::class]);
+
+        // Writing the container scaffolds a child that cascade-deletes with it,
+        // so the purge deletes a record its own query already returned.
+        $container = new E2eScaffoldingObject();
+        $container->Title = 'container';
+        $container->write();
+
+        FixtureLoader::create()->reset();
+
+        self::assertSame(0, E2eScaffoldingObject::get()->count());
+    }
+
+    public function testResetSurvivesVersionedRecordsCascadingIntoEachOther(): void
+    {
+        // The shape a page-plus-elements purge has: archiving the container
+        // cascade-deletes the contained record the same query already returned.
+        Config::modify()->set(FixtureLoader::class, 'purge_classes', [E2eVersionedObject::class]);
+
+        $container = new E2eVersionedObject();
+        $container->Title = 'container';
+        $container->write();
+        $contained = new E2eVersionedObject();
+        $contained->Title = 'contained';
+        $contained->ContainerID = $container->ID;
+        $contained->write();
+        $contained->publishSingle();
+
+        FixtureLoader::create()->reset();
+
+        self::assertSame(0, $this->draftCount(E2eVersionedObject::class));
+        self::assertCount(0, Versioned::get_by_stage(E2eVersionedObject::class, Versioned::LIVE)->toArray());
+    }
+
+    public function testResetThrowsWhenPurgeClassesEmpty(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'purge_classes', []);
 
         $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('fixture_page_classes is empty');
+        $this->expectExceptionMessage('purge_classes is empty');
 
         FixtureLoader::create()->reset();
     }
@@ -235,9 +357,9 @@ final class FixtureLoaderTest extends SapphireTest
             'simple-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/simple-page.yml',
             'fallback-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/fallback-page.yml',
         ]);
-        // Both classes are reset-eligible: if reset ran per-fixture, loading the
-        // second fixture would archive the first. Coexistence proves reset ran once.
-        Config::modify()->set(FixtureLoader::class, 'fixture_page_classes', [
+        // Both classes are in the purge scope: if reset ran per-fixture, loading
+        // the second fixture would wipe the first. Coexistence proves reset ran once.
+        Config::modify()->set(FixtureLoader::class, 'purge_classes', [
             E2eFixtureTestPage::class,
             E2eOtherTestPage::class,
         ]);
@@ -251,11 +373,8 @@ final class FixtureLoaderTest extends SapphireTest
     public function testLoadAllThrowsAndDoesNotResetWhenNoFixturesConfigured(): void
     {
         Config::modify()->set(FixtureLoader::class, 'fixtures', []);
-        Config::modify()->set(FixtureLoader::class, 'fixture_page_classes', [
-            E2eFixtureTestPage::class,
-        ]);
 
-        // A pre-existing E2E page a reset WOULD archive; it must survive the throw.
+        // A pre-existing page a reset WOULD wipe; it must survive the throw.
         $existing = new E2eFixtureTestPage();
         $existing->Title = 'Pre-existing';
         $existing->URLSegment = 'e2e-preexisting';
@@ -303,12 +422,8 @@ final class FixtureLoaderTest extends SapphireTest
             'simple-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/simple-page.yml',
             'missing-file' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/does-not-exist.yml',
         ]);
-        Config::modify()->set(FixtureLoader::class, 'fixture_page_classes', [
-            E2eFixtureTestPage::class,
-        ]);
-
-        // A pre-existing E2E page a reset WOULD archive: an invalid path must be
-        // caught before reset, so this survives and the valid fixture is NOT loaded.
+        // A pre-existing page a reset WOULD wipe: an invalid path must be caught
+        // before reset, so this survives and the valid fixture is NOT loaded.
         $existing = new E2eFixtureTestPage();
         $existing->Title = 'Pre-existing';
         $existing->URLSegment = 'e2e-preexisting';
@@ -405,6 +520,18 @@ final class FixtureLoaderTest extends SapphireTest
     private function countScaffoldChildren(): int
     {
         return (int) E2eScaffoldingObject::get()->filter('Title', 'scaffolded-container')->count();
+    }
+
+    /**
+     * @param class-string<DataObject> $class
+     */
+    private function draftCount(string $class): int
+    {
+        return Versioned::withVersionedMode(static function () use ($class): int {
+            Versioned::set_stage(Versioned::DRAFT);
+
+            return (int) DataObject::get($class)->count();
+        });
     }
 
     /**

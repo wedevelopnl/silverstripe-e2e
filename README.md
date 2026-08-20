@@ -41,9 +41,10 @@ this module. A consuming project only supplies its own fixtures and a small
 dev-only configuration block.
 
 ### Registering fixtures
-Register your fixtures and the page classes the loader is allowed to resolve in a
-dev-only config fragment (`Only: environment: dev`), so the endpoint is never
-active outside development/CI:
+Register your fixtures, the classes E2E owns, and the page classes the loader
+prefers when resolving where a load should navigate, in a dev-only config
+fragment (`Only: environment: dev`) so the endpoint is never active outside
+development/CI:
 
 ```yaml
 ---
@@ -52,15 +53,56 @@ Only:
   environment: dev
 ---
 WeDevelop\E2e\Fixtures\FixtureLoader:
+  purge_classes:
+    - Page
+    - My\Module\Model\Element
+    - My\Module\Model\SharedBlock
   fixture_page_classes:
     - Page
   fixtures:
     my-fixture: 'my-vendor/my-module:tests/E2E/Fixture/my-fixture.yml'
 ```
 
-`fixture_page_classes` is an allowlist: the loader resolves the page to navigate
-to by walking these classes in the order listed. `fixtures` maps the name used by
-the Playwright client to a module-relative path of the fixture YAML.
+`fixtures` maps the name used by the Playwright client to a module-relative path
+of the fixture YAML. `fixture_page_classes` is a preference list: the loader
+resolves the page to navigate to by walking these classes in order, falling back
+to the first `SiteTree` subclass the fixture created. `purge_classes` declares
+what a reset removes, and is explained next.
+
+### What a reset deletes
+`reset()` — run before every load, and exposed on its own endpoint — deletes
+**every record of the configured `purge_classes`, and of their subclasses, on
+both stages**. Ownership is declared, not inferred: nothing keys off a URL
+segment, a naming convention, or which records the fixture happened to write.
+
+That is what makes the reset complete. A run leaves behind more than the fixture
+created — a library record with no page and no URL, a record a spec produced by
+clicking through the CMS, debris from a run that crashed halfway. None of those
+are reachable from the fixture's own records, and all of them are records of a
+purged class.
+
+The consequence is the constraint: **the E2E database must be one nobody minds
+losing.** Point the suite at a database you also develop in and a reset takes
+your own content in those classes with it.
+
+Two things to get right when declaring the scope:
+
+- **List base classes.** Subclasses come along, so one entry usually covers a
+  family — and `Page` also purges an `ErrorPage`, which `dev/build` restores.
+- **Never list identity or configuration classes.** Purging `Member` takes the
+  admin account the Playwright session logs in with, and every later run fails
+  to authenticate. The module does not police the list; it deletes what you
+  declare.
+
+`purge_classes` is empty by default and `reset()` throws while it is, so the
+loader can never wipe data nobody put in its charge.
+
+#### Upgrading from 0.1.x
+Earlier versions archived pages whose `URLSegment` started with `e2e-` and whose
+ClassName was listed in `fixture_page_classes`. Both `url_segment_prefix` and
+that role of `fixture_page_classes` are gone: declare `purge_classes` instead.
+`fixture_page_classes` keeps only its navigation role, and fixture YAML no longer
+needs the `e2e-` URLSegment convention.
 
 ### Config overrides during load
 The most common write-time customisation is suppressing a side effect whose
