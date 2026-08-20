@@ -4,6 +4,10 @@ Only:
   environment: dev
 ---
 WeDevelop\E2e\Fixtures\FixtureLoader:
+  # Everything this harness app holds is fixture data, so a reset owns the whole
+  # page tree. ErrorPage goes with it (it extends Page); dev/build restores it.
+  purge_classes:
+    - Page
   fixture_page_classes:
     - Page
   fixtures:

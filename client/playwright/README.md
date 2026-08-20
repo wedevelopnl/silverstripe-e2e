@@ -63,7 +63,8 @@ await page.goto(`/admin/some-other-section/${pageId}`);
 
 The `/dev/e2e-fixtures` endpoint and the `strict_user_agent_check` relaxation are
 provided automatically by the module's dev-only config when installed. Register your
-fixtures and `fixture_page_classes` in your project's own dev config:
+fixtures, the classes a reset owns, and the page classes to navigate to in your
+project's own dev config:
 
 ```yaml
 ---
@@ -72,11 +73,17 @@ Only:
   environment: dev
 ---
 WeDevelop\E2e\Fixtures\FixtureLoader:
+  purge_classes:
+    - Page
   fixture_page_classes:
     - Page
   fixtures:
     my-fixture: 'my-vendor/my-module:tests/E2E/Fixture/my-fixture.yml'
 ```
+
+`reset()` deletes every record of `purge_classes` (subclasses included) on both
+stages, so the E2E database must be one nobody minds losing. See the module
+README for what belongs in that list.
 
 To inject behavior around a load (e.g. suppressing model auto-scaffolding), add an
 Extension implementing `onBeforeLoad(string $name, FixtureFactory $factory)` /

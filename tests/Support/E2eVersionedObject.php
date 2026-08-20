@@ -17,6 +17,21 @@ class E2eVersionedObject extends DataObject implements TestOnly
         'Title' => 'Varchar(255)',
     ];
 
+    /** @var array<string, class-string> */
+    private static array $has_one = [
+        'Container' => self::class,
+    ];
+
+    /** @var array<string, string> */
+    private static array $has_many = [
+        'Contained' => self::class . '.Container',
+    ];
+
+    /** @var list<string> */
+    private static array $cascade_deletes = [
+        'Contained',
+    ];
+
     /** @var array<string, string> */
     private static array $extensions = [
         Versioned::class,
