@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace WeDevelop\E2e\Fixtures;
 
 use InvalidArgumentException;
+use SilverStripe\Assets\File;
 use SilverStripe\Assets\Image;
 use SilverStripe\Control\Director;
 use SilverStripe\Core\Manifest\ModuleResourceLoader;
@@ -15,7 +16,7 @@ use SilverStripe\Versioned\Versioned;
  * Declarative post-action applied after YAML fixture loading.
  *
  * Encapsulates the definition and execution of state manipulation (publish,
- * unpublish, modify, attach_image) on fixture records. Used by
+ * unpublish, modify, attach_image, attach_file) on fixture records. Used by
  * {@see FixtureLoader} after YAML writing. Operates on any DataObject and
  * carries no domain knowledge.
  */
@@ -27,16 +28,18 @@ final readonly class FixturePostAction
         'unpublish',
         'modify',
         'attach_image',
+        'attach_file',
     ];
 
     /** @var list<string> Actions that do not require the Versioned extension. */
     private const array NON_VERSIONED_ACTIONS = [
         'modify',
         'attach_image',
+        'attach_file',
     ];
 
     /**
-     * @param 'publish_recursive'|'unpublish'|'modify'|'attach_image' $action
+     * @param 'publish_recursive'|'unpublish'|'modify'|'attach_image'|'attach_file' $action
      * @param class-string $class
      * @param array<string, string|int|float|bool> $fields
      */
@@ -77,7 +80,7 @@ final readonly class FixturePostAction
         /** @var array<string, string|int|float|bool> $fields */
         $fields = $config['fields'] ?? [];
 
-        /** @var 'publish_recursive'|'unpublish'|'modify'|'attach_image' $action */
+        /** @var 'publish_recursive'|'unpublish'|'modify'|'attach_image'|'attach_file' $action */
         return new self(
             action: $action,
             class: $config['class'],
@@ -108,6 +111,7 @@ final readonly class FixturePostAction
             'unpublish' => $record->doUnpublish(),
             'modify' => $this->applyModify($record),
             'attach_image' => $this->applyAttachImage($record),
+            'attach_file' => $this->applyAttachFile($record),
         };
     }
 
@@ -128,6 +132,51 @@ final readonly class FixturePostAction
      */
     private function applyAttachImage(DataObject $record): void
     {
+        [$relation, $sourcePath] = $this->resolveAttachment();
+
+        $image = Image::create();
+        $image->setFromLocalFile($sourcePath, 'Uploads/' . basename($sourcePath));
+        $image->write();
+        $image->publishSingle();
+
+        $this->linkAttachment($record, $relation, $image);
+    }
+
+    /**
+     * Attach a local file via a has_one relation, as the File subclass its
+     * extension maps to (`File.class_for_file_extension`) — the class a CMS
+     * upload of the same file gets, so its write hooks run as they would there.
+     *
+     * Requires `fields.relation` and `fields.source` as attach_image does;
+     * `fields.folder` defaults to Uploads. A file already at the target path is
+     * reused as it is, so a reload does not pile up renamed copies (purging File
+     * would wipe every asset); delete it to pick up a changed source.
+     */
+    private function applyAttachFile(DataObject $record): void
+    {
+        [$relation, $sourcePath] = $this->resolveAttachment();
+        $folder = trim((string) ($this->fields['folder'] ?? 'Uploads'), '/');
+        $filename = $folder . '/' . basename($sourcePath);
+
+        $file = File::find($filename);
+        if ($file === null) {
+            $class = File::get_class_for_file_extension(File::get_file_extension($sourcePath));
+            /** @var File $file */
+            $file = $class::create();
+            $file->setFromLocalFile($sourcePath, $filename);
+            $file->write();
+        }
+
+        $file->publishSingle();
+
+        $this->linkAttachment($record, $relation, $file);
+    }
+
+    /**
+     * @return array{non-empty-string, non-empty-string} The relation name and the absolute source path.
+     */
+    private function resolveAttachment(): array
+    {
         /** @var string $relation */
         $relation = $this->fields['relation'] ?? '';
         /** @var string $source */
@@ -135,31 +184,30 @@ final readonly class FixturePostAction
 
         if ($relation === '' || $source === '') {
             throw new InvalidArgumentException(
-                'attach_image requires "relation" and "source" in fields',
+                sprintf('%s requires "relation" and "source" in fields', $this->action),
             );
         }
 
         $resolved = ModuleResourceLoader::singleton()->resolvePath($source);
         if ($resolved === null) {
             throw new InvalidArgumentException(
-                sprintf('Could not resolve image source path: %s', $source),
+                sprintf('Could not resolve %s source path: %s', $this->action, $source),
             );
         }
 
         $absolutePath = Director::baseFolder() . '/' . $resolved;
         if (!file_exists($absolutePath)) {
             throw new InvalidArgumentException(
-                sprintf('Image file not found: %s (resolved from "%s")', $absolutePath, $source),
+                sprintf('%s source file not found: %s (resolved from "%s")', $this->action, $absolutePath, $source),
             );
         }
 
-        $image = Image::create();
-        $image->setFromLocalFile($absolutePath, 'Uploads/' . basename($absolutePath));
-        $image->write();
-        $image->publishSingle();
+        return [$relation, $absolutePath];
+    }
 
-        $foreignKey = $relation . 'ID';
-        $record->setField($foreignKey, $image->ID);
+    private function linkAttachment(DataObject $record, string $relation, File $file): void
+    {
+        $record->setField($relation . 'ID', $file->ID);
         $record->write();
     }
 }

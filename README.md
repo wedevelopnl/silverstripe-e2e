@@ -124,6 +124,43 @@ WeDevelop\E2e\Fixtures\FixtureLoader:
 Reach for an `onBeforeLoad` extension (below) only when a static value can't
 express it — dynamic values or non-config side effects.
 
+### Post-actions
+A fixture registered as an array can list `post_actions`, applied in order after
+its YAML is written. Each names an `action`, the `class` and `identifier` of a
+record in that fixture, and `fields` where the action takes any:
+
+```yaml
+WeDevelop\E2e\Fixtures\FixtureLoader:
+  fixtures:
+    my-fixture:
+      path: 'my-vendor/my-module:tests/E2E/Fixture/my-fixture.yml'
+      post_actions:
+        - action: attach_file
+          class: My\Module\Model\Icon
+          identifier: arrow
+          fields:
+            relation: Icon
+            source: 'my-vendor/my-module:tests/E2E/Fixture/arrow.svg'
+            folder: Icons
+        - action: publish_recursive
+          class: Page
+          identifier: home
+```
+
+| Action | Does | `fields` |
+|---|---|---|
+| `publish_recursive` | Publishes the record and what it owns (Versioned only) | — |
+| `unpublish` | Removes the record from live (Versioned only) | — |
+| `modify` | Sets the fields and writes the record | the field values |
+| `attach_image` | Creates an `Image` in `Uploads/`, publishes it, sets the has_one | `relation`, `source` |
+| `attach_file` | Creates the `File` subclass the extension maps to (`File.class_for_file_extension`), publishes it, sets the has_one | `relation`, `source`, `folder` (default `Uploads`) |
+
+`attach_file` stores the file as the class a CMS upload of it would get, so that
+class's write hooks run — an SVG mapped to a sanitising subclass is sanitised,
+where `attach_image` would store it as an unsanitised `Image`. A file already at
+the target path is reused as it is, so reloads do not pile up renamed copies;
+delete it to pick up a changed source.
+
 ### Extension hooks
 To inject domain behavior around a load — for example computing dynamic values or
 publishing extra records — add an `Extension` implementing either hook and wire
