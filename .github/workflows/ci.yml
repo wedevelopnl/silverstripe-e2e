@@ -140,6 +140,7 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - run: npm run typecheck
       - uses: actions/cache/restore@v6
         id: playwright-cache
         with:
