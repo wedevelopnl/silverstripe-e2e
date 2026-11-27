@@ -197,7 +197,8 @@ Every feature of the old loader, and what replaces it:
 | post-action `unpublish` | A draft-only record (no `@published`, or `false`). The history "was published, then unpublished" cannot be expressed |
 | post-action `modify` | `'@draft'` on a published record (silverstripe-fixtures 0.1.2) |
 | post-actions `attach_image` / `attach_file` | A `File` or `Image` record with `@source` and a `Name`, linked with `=>Class.identifier`. No `Uploads/` default: declare a `Folder` as its `Parent`. No subclass chosen by extension: name the class in the fixture |
-| `POST load` with `fixture=<name>` | `POST load` with `file[]` and/or `dir[]`; the flat `fixtures` map replaces `data` (`pageId`, `pageUrl`, `fixtureMap`) |
+| `POST load` with `fixture=<name>` | `POST load` with `file[]` and/or `dir[]`; the flat `fixtures` map replaces `data.pageId` and `data.fixtureMap` |
+| `data.pageUrl` (the page's `Link()`) | Nothing. Build the URL in the spec: the front end from the `URLSegment` the fixture states (with its parents' segments, such as `/about/team/`), the CMS editor with `loadAndNavigate(page, paths, 'Page.home')` or `/admin/pages/edit/show/${ids['Page.home']}` |
 | `POST load-all` | Gone (404). Load a directory with `dir[]` |
 | `GET reset` | POST only; any other method answers 405 |
 | `load-e2e-fixtures` task | silverstripe-fixtures' `fixtures` task: `vendor/bin/sake tasks:fixtures --action=reset --dir=<dir>` |
