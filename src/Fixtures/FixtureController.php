@@ -40,10 +40,11 @@ use WeDevelop\Fixtures\InvalidFixtureException;
  * unauthenticated /reset endpoint into a remote data-wipe primitive. Do not
  * relax the env gating without adding real authentication.
  *
- * INVARIANT: no path outside the project root reaches the loader. The root
- * check in {@see isInsideProject()} and the extension rule are the only fence on the
- * caller-supplied paths. Containment is lexical, never `realpath`: a module
- * installed from a symlinked path repository lives outside the root on disk.
+ * INVARIANT: no path outside the project root reaches the loader. The `..`
+ * refusal in {@see hasDotDotSegment()}, the root check in {@see isInsideProject()}
+ * and the extension rule are the only fence on the caller-supplied paths.
+ * Containment is lexical, never `realpath`: a module installed from a symlinked
+ * path repository lives outside the root on disk.
  *
  * Both actions answer 405 to anything but POST, so opening the address in a
  * browser changes nothing. The destructive {@see reset()} action additionally
@@ -176,7 +177,9 @@ class FixtureController extends Controller
     {
         $problems = [];
         foreach ($files as $file) {
-            if (!$this->isInsideProject($file)) {
+            if ($this->hasDotDotSegment($file)) {
+                $problems[] = $file . ': must not contain .. segments';
+            } elseif (!$this->isInsideProject($file)) {
                 $problems[] = $file . ': outside the project';
             } elseif (!in_array(pathinfo($file, PATHINFO_EXTENSION), self::EXTENSIONS, true)) {
                 $problems[] = $file . ': not a .yml or .yaml file';
@@ -184,6 +187,11 @@ class FixtureController extends Controller
         }
 
         foreach ($dirs as $dir) {
+            if ($this->hasDotDotSegment($dir)) {
+                $problems[] = $dir . ': must not contain .. segments';
+                continue;
+            }
+
             if (!$this->isInsideProject($dir)) {
                 $problems[] = $dir . ': outside the project';
                 continue;
@@ -217,19 +225,23 @@ class FixtureController extends Controller
     }
 
     /**
-     * Lexical containment: `.` and `..` are resolved on the path's text and symlinks are not followed.
+     * The OS resolves `..` after following a symlink, so a `..` behind a symlinked directory inside the root can leave
+     * it while the path's text stays inside. No text-only rule can pop it safely: refuse it.
+     */
+    private function hasDotDotSegment(string $path): bool
+    {
+        return in_array('..', explode('/', $path), true);
+    }
+
+    /**
+     * Lexical containment on a path without `..`: `.` and empty segments are dropped and symlinks are not followed.
      */
     private function isInsideProject(string $path): bool
     {
-        $segments = [];
-        foreach (explode('/', $this->absolute($path)) as $segment) {
-            if ($segment === '..') {
-                array_pop($segments);
-            } elseif ($segment !== '' && $segment !== '.') {
-                $segments[] = $segment;
-            }
-        }
-
+        $segments = array_filter(
+            explode('/', $this->absolute($path)),
+            static fn (string $segment): bool => $segment !== '' && $segment !== '.',
+        );
         $normalised = '/' . implode('/', $segments);
         $root = rtrim(Director::baseFolder(), '/');
 
