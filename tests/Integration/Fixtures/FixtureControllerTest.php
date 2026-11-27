@@ -160,7 +160,29 @@ final class FixtureControllerTest extends SapphireTest
         $body = $this->json($this->dispatch('POST', 'load', ['file' => [$path]]), 400);
 
         self::assertFalse($body['success']);
-        self::assertSame([$path . ': outside the project'], $body['problems']);
+        self::assertSame([$path . ': must not contain .. segments'], $body['problems']);
+        self::assertFalse($this->pageExists('e2e-controller-outside'));
+    }
+
+    /**
+     * The OS resolves `..` after following a symlink, so a `..` behind the harness's symlinked vendor/ module leaves
+     * the project even though the path's text stays inside it.
+     */
+    public function testLoadRefusesDotDotBehindSymlinkedDirectory(): void
+    {
+        $outside = $this->writeOutsideFixture();
+        $link = 'vendor/wedevelopnl/silverstripe-e2e';
+        $target = (string) realpath(Director::baseFolder() . '/' . $link);
+        $path = $link . '/' . str_repeat('../', substr_count(trim($target, '/'), '/') + 1) . ltrim($outside, '/');
+        self::assertTrue(is_link(Director::baseFolder() . '/' . $link));
+        self::assertSame(realpath($outside), realpath(Director::baseFolder() . '/' . $path));
+
+        $body = $this->json($this->dispatch('POST', 'load', ['file' => [$path], 'dir' => [dirname($path)]]), 400);
+
+        self::assertSame([
+            $path . ': must not contain .. segments',
+            dirname($path) . ': must not contain .. segments',
+        ], $body['problems']);
         self::assertFalse($this->pageExists('e2e-controller-outside'));
     }
 
@@ -190,7 +212,7 @@ final class FixtureControllerTest extends SapphireTest
 
         $body = $this->json($this->dispatch('POST', 'load', ['dir' => [$dir, sys_get_temp_dir()]]), 400);
 
-        self::assertSame([$dir . ': outside the project', sys_get_temp_dir() . ': outside the project'], $body['problems']);
+        self::assertSame([$dir . ': must not contain .. segments', sys_get_temp_dir() . ': outside the project'], $body['problems']);
     }
 
     public function testLoadRefusesFileWithoutFixtureExtension(): void

@@ -37,7 +37,7 @@ test('refuses to navigate to a record that was not loaded', async ({ page }) => 
 });
 
 test('refuses a path outside the project and names it', async ({ request }) => {
-  await expect(fixtures.load(request, { files: ['../outside.yml'] })).rejects.toThrow(
-    '- ../outside.yml: outside the project',
+  await expect(fixtures.load(request, { files: ['/tmp/outside.yml', '../outside.yml'] })).rejects.toThrow(
+    '- /tmp/outside.yml: outside the project\n- ../outside.yml: must not contain .. segments',
   );
 });

@@ -59,10 +59,14 @@ Page:
 
 ### Paths
 - A path is absolute, or relative to the project root (`Director::baseFolder()`).
+- A path with a `..` segment is refused with `<path>: must not contain ..
+  segments`, wherever the `..` would lead: behind a symlinked directory the OS
+  resolves it from the link's target, so the path's text cannot tell where it
+  ends up. Name the path from the project root, or absolute, instead.
 - Only paths inside the project root are loaded. The check works on the path's
-  text: `.` and `..` are resolved, symlinks are not followed, so a module
-  installed from a symlinked path repository counts as inside. A path that leads
-  out of the root is refused with `<path>: outside the project`.
+  text and does not follow symlinks, so a module installed from a symlinked path
+  repository counts as inside. A path outside the root, such as an absolute
+  `/tmp/pages.yml`, is refused with `<path>: outside the project`.
 - A file must end in `.yml` or `.yaml`, in lower case.
 - A directory contributes the `.yml` and `.yaml` files (lower-case extension)
   directly in it, in name order (byte order: digits before upper case before

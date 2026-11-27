@@ -68,7 +68,7 @@ test('...', async ({ page }) => {
 
 Every failure throws an `Error` reading `Fixture load failed (<status>): <error>`
 (or `Fixture reset failed …`), followed by one `- <problem>` line per problem,
-such as `- ../secrets.yml: outside the project`.
+such as `- /tmp/secrets.yml: outside the project`.
 
 `loadAndNavigate` is a convenience wrapper for the common case of editing the
 loaded record on the CMS pages screen (`/admin/pages/edit/show/{id}`). To
