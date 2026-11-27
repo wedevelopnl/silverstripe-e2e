@@ -1,27 +1,22 @@
-import type { APIRequestContext, Page } from '@playwright/test';
+import type { APIRequestContext, APIResponse, Page } from '@playwright/test';
 
-export interface FixtureMap {
-  [className: string]: { [identifier: string]: number };
+/** The id of every record a load made, keyed `<Class as written in the fixture>.<identifier>`, in load order. */
+export type FixtureIds = Record<string, number>;
+
+/**
+ * Fixture files and directories, absolute or relative to the project root. Files load first, then each
+ * directory's `.yml`/`.yaml` files in name order, without those of its subdirectories.
+ */
+export interface FixturePaths {
+  files?: string[];
+  dirs?: string[];
 }
 
-export interface FixtureLoadResponse {
-  pageId: number;
-  pageUrl: string;
-  fixtureMap: FixtureMap;
-}
-
-interface LoadEnvelope {
+interface Envelope {
   success: boolean;
   error?: string;
-  data: FixtureLoadResponse;
-}
-
-export type FixtureLoadAllResponse = Record<string, FixtureLoadResponse>;
-
-interface LoadAllEnvelope {
-  success: boolean;
-  error?: string;
-  fixtures: FixtureLoadAllResponse;
+  problems?: string[];
+  fixtures?: FixtureIds;
 }
 
 export interface FixtureClientOptions {
@@ -39,58 +34,68 @@ export interface FixtureClientOptions {
   editorReadyTimeout?: number;
 }
 
+/**
+ * Reads the response envelope, or throws `<action> failed (<status>): <error>` followed by one `- <problem>`
+ * line per problem.
+ */
+async function readEnvelope(response: APIResponse, action: string): Promise<Envelope> {
+  const text = await response.text();
+  let body: Envelope | null = null;
+  try {
+    body = JSON.parse(text) as Envelope;
+  } catch {
+    // Not JSON, such as the framework's HTML 404 page when the route is missing: report the raw body below
+  }
+
+  if (response.ok() && body?.success === true) {
+    return body;
+  }
+
+  // The error of an invalid fixture repeats its problems after the first line; they follow as a list of their own
+  const error = body?.error?.split('\n')[0] ?? text;
+  const problems = (body?.problems ?? []).map((problem) => `\n- ${problem}`).join('');
+  throw new Error(`${action} failed (${response.status()}): ${error}${problems}`);
+}
+
 export function createFixtureClient(options: FixtureClientOptions = {}) {
   const endpoint = options.endpoint ?? '/dev/e2e-fixtures';
   const editorReadySelector = options.editorReadySelector ?? null;
   const editorReadyTimeout = options.editorReadyTimeout;
 
-  async function load(request: APIRequestContext, fixture: string): Promise<FixtureLoadResponse> {
-    const response = await request.post(`${endpoint}/load`, { form: { fixture } });
-    if (!response.ok()) {
-      throw new Error(`Fixture "${fixture}" load failed (${response.status()}): ${await response.text()}`);
+  /** Clears what earlier loads put in, then loads `paths` together: every file or none. */
+  async function load(request: APIRequestContext, paths: FixturePaths): Promise<FixtureIds> {
+    const form = new FormData();
+    for (const file of paths.files ?? []) {
+      form.append('file[]', file);
+    }
+    for (const dir of paths.dirs ?? []) {
+      form.append('dir[]', dir);
     }
 
-    const body = (await response.json()) as LoadEnvelope;
-    if (!body.success) {
-      throw new Error(`Fixture "${fixture}" load failed: ${body.error ?? 'unknown error'}`);
-    }
+    const response = await request.post(`${endpoint}/load`, { form });
+    const body = await readEnvelope(response, 'Fixture load');
 
-    return body.data;
-  }
-
-  async function loadAll(request: APIRequestContext): Promise<FixtureLoadAllResponse> {
-    const response = await request.post(`${endpoint}/load-all`);
-    if (!response.ok()) {
-      throw new Error(`Fixture load-all failed (${response.status()}): ${await response.text()}`);
-    }
-
-    const body = (await response.json()) as LoadAllEnvelope;
-    if (!body.success) {
-      throw new Error(`Fixture load-all failed: ${body.error ?? 'unknown error'}`);
-    }
-
-    return body.fixtures;
+    return body.fixtures ?? {};
   }
 
   async function reset(request: APIRequestContext): Promise<void> {
     const response = await request.post(`${endpoint}/reset?confirm=1`);
-    if (!response.ok()) {
-      throw new Error(`Fixture reset failed (${response.status()}): ${await response.text()}`);
-    }
-
-    const body = (await response.json()) as { success: boolean; error?: string };
-    if (!body.success) {
-      throw new Error(`Fixture reset failed: ${body.error ?? 'unknown error'}`);
-    }
+    await readEnvelope(response, 'Fixture reset');
   }
 
+  /** Loads `paths` and opens the CMS edit screen of `record`, such as `Page.home`. */
   async function loadAndNavigate(
     page: Page,
-    fixture: string,
+    paths: FixturePaths,
+    record: string,
     request: APIRequestContext = page.request,
-  ): Promise<FixtureLoadResponse> {
-    const result = await load(request, fixture);
-    await page.goto(`/admin/pages/edit/show/${result.pageId}`);
+  ): Promise<FixtureIds> {
+    const ids = await load(request, paths);
+    if (!Object.hasOwn(ids, record)) {
+      throw new Error(`Record "${record}" was not loaded; loaded: ${Object.keys(ids).join(', ')}`);
+    }
+
+    await page.goto(`/admin/pages/edit/show/${ids[record]}`);
     if (editorReadySelector !== null) {
       await page.locator(editorReadySelector).waitFor({
         state: 'hidden',
@@ -98,10 +103,10 @@ export function createFixtureClient(options: FixtureClientOptions = {}) {
       });
     }
 
-    return result;
+    return ids;
   }
 
-  return { load, loadAll, reset, loadAndNavigate };
+  return { load, reset, loadAndNavigate };
 }
 
 export interface AdminAuthOptions {

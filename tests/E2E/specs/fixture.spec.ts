@@ -1,31 +1,43 @@
 import { expect, test } from '@playwright/test';
 import { createFixtureClient } from '@wedevelop/e2e';
 
+// Relative to the harness project root, where this module is installed under vendor/.
+const FIXTURES = 'vendor/wedevelopnl/silverstripe-e2e/tests/E2E/Fixture';
+
 const fixtures = createFixtureClient();
 
 test.afterEach(async ({ request }) => {
   await fixtures.reset(request);
 });
 
-test('loads a fixture over HTTP and returns the created page id', async ({ request }) => {
-  const result = await fixtures.load(request, 'demo-home');
+test('loads a fixture file by path and returns the id of each record', async ({ request }) => {
+  const ids = await fixtures.load(request, { files: [`${FIXTURES}/demo.yml`] });
 
-  expect(result.pageId).toBeGreaterThan(0);
-  expect(result.pageUrl).toContain('e2e-home');
-  expect(result.fixtureMap.Page).toBeDefined();
+  expect(Object.keys(ids)).toEqual(['Page.home']);
+  expect(ids['Page.home']).toBeGreaterThan(0);
 });
 
-test('navigates to the loaded page in the CMS', async ({ page }) => {
-  const result = await fixtures.loadAndNavigate(page, 'demo-home');
+test('loads a folder of fixture files in name order', async ({ request }) => {
+  const ids = await fixtures.load(request, { dirs: [FIXTURES] });
 
-  await expect(page).toHaveURL(new RegExp(`/admin/pages/edit/show/${result.pageId}`));
+  expect(Object.keys(ids)).toEqual(['Page.about', 'Page.home']);
+});
+
+test('navigates to a loaded page in the CMS', async ({ page }) => {
+  const ids = await fixtures.loadAndNavigate(page, { files: [`${FIXTURES}/demo.yml`] }, 'Page.home');
+
+  await expect(page).toHaveURL(new RegExp(`/admin/pages/edit/show/${ids['Page.home']}`));
   await expect(page.getByText('E2E Home').first()).toBeVisible();
 });
 
-test('loads all configured fixtures over HTTP', async ({ request }) => {
-  const results = await fixtures.loadAll(request);
+test('refuses to navigate to a record that was not loaded', async ({ page }) => {
+  await expect(
+    fixtures.loadAndNavigate(page, { files: [`${FIXTURES}/demo.yml`] }, 'Page.missing'),
+  ).rejects.toThrow('Page.missing');
+});
 
-  expect(results['demo-home']).toBeDefined();
-  expect(results['demo-home'].pageId).toBeGreaterThan(0);
-  expect(results['demo-home'].pageUrl).toContain('e2e-home');
+test('refuses a path outside the project and names it', async ({ request }) => {
+  await expect(fixtures.load(request, { files: ['../outside.yml'] })).rejects.toThrow(
+    '- ../outside.yml: outside the project',
+  );
 });

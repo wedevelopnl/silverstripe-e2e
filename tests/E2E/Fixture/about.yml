@@ -1,0 +1,5 @@
+Page:
+  about:
+    Title: 'E2E About'
+    URLSegment: 'e2e-about'
+    Sort: 2
