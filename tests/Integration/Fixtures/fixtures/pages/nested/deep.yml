@@ -1,0 +1,5 @@
+Page:
+  deep:
+    Title: Deep
+    URLSegment: e2e-controller-deep
+    Sort: 4

@@ -1,1 +1,0 @@
-Plain text fixture for attach_file.

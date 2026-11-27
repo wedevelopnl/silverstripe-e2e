@@ -15,7 +15,8 @@
     }],
     "require": {
         "php": "^8.3",
-        "silverstripe/framework": "^6"
+        "silverstripe/framework": "^6",
+        "wedevelopnl/silverstripe-fixtures": "^0.1.2"
     },
     "require-dev": {
         "cambis/silverstan": "^2.1",
@@ -29,7 +30,7 @@
         "wernerkrauss/silverstripe-rector": "^1.0"
     },
     "suggest": {
-        "silverstripe/htmleditor-tinymce": "Required only for the generate-tinymce-combined CI task; fixtures-only consumers do not need it (^1.1)."
+        "silverstripe/htmleditor-tinymce": "Required only for the generate-tinymce-combined CI task (^1.1)."
     },
     "autoload": {
         "psr-4": {

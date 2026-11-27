@@ -1,0 +1,5 @@
+Page:
+  about:
+    Title: About
+    URLSegment: e2e-controller-about
+    Sort: 2

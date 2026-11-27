@@ -4,21 +4,22 @@ declare(strict_types=1);
 
 namespace WeDevelop\E2e\Fixtures;
 
-use InvalidArgumentException;
 use Override;
-use RuntimeException;
 use SilverStripe\Control\Controller;
 use SilverStripe\Control\Director;
 use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Control\HTTPResponse;
+use Throwable;
+use WeDevelop\Fixtures\FixtureLoader;
+use WeDevelop\Fixtures\InvalidFixtureException;
 
 /**
- * Dev-only HTTP controller for loading and resetting E2E fixtures.
+ * Dev-only JSON layer over wedevelopnl/silverstripe-fixtures for browser tests.
  *
  * Registered with DevelopmentAdmin at /dev/e2e-fixtures via _config/fixtures.yml
- * (gated Only: environment: dev). Playwright POSTs a fixture name to /load and
- * gets JSON with page IDs for CMS navigation; POST /load-all seeds every
- * configured fixture in one request; POST /reset clears E2E data.
+ * (gated Only: environment: dev). Playwright POSTs fixture files (`file[]`) and
+ * directories (`dir[]`) to /load and gets a flat `Class.identifier => id` map;
+ * POST /reset?confirm=1 clears what the loads put in.
  *
  * SECURITY POSTURE — read before changing the guards:
  *
@@ -39,23 +40,29 @@ use SilverStripe\Control\HTTPResponse;
  * unauthenticated /reset endpoint into a remote data-wipe primitive. Do not
  * relax the env gating without adding real authentication.
  *
- * The destructive {@see reset()} action additionally requires an explicit
- * `confirm=1` query parameter so an accidental browser/curl hit cannot wipe
- * fixture data. That is an accident guard, NOT an authentication control.
+ * INVARIANT: no path outside the project root reaches the loader. The root
+ * check in {@see isInsideProject()} and the extension rule are the only fence on the
+ * caller-supplied paths. Containment is lexical, never `realpath`: a module
+ * installed from a symlinked path repository lives outside the root on disk.
+ *
+ * Both actions answer 405 to anything but POST, so opening the address in a
+ * browser changes nothing. The destructive {@see reset()} action additionally
+ * requires an explicit `confirm=1` query parameter. That is an accident guard,
+ * NOT an authentication control.
  */
 class FixtureController extends Controller
 {
+    private const array EXTENSIONS = ['yml', 'yaml'];
+
     /** @var array<string, string> */
     private static array $url_handlers = [
-        'POST load' => 'load',
-        'POST load-all' => 'loadAll',
-        'POST reset' => 'reset',
+        'load' => 'load',
+        'reset' => 'reset',
     ];
 
     /** @var list<string> */
     private static array $allowed_actions = [
         'load',
-        'loadAll',
         'reset',
     ];
 
@@ -82,71 +89,51 @@ class FixtureController extends Controller
 
     public function load(HTTPRequest $request): HTTPResponse
     {
-        $fixtureName = $request->postVar('fixture');
-        if (!is_string($fixtureName) || $fixtureName === '') {
+        if (!$request->isPOST()) {
+            return $this->methodNotAllowed();
+        }
+
+        $files = $this->listVar($request->postVar('file'));
+        $dirs = $this->listVar($request->postVar('dir'));
+        if ($files === [] && $dirs === []) {
             return $this->jsonResponse(400, [
                 'success' => false,
-                'error' => 'Missing required "fixture" parameter',
+                'error' => 'Pass at least one file[] or dir[]',
             ]);
         }
 
-        $loader = FixtureLoader::create();
-
-        /** @var non-empty-string $fixtureName */
         try {
-            $result = $loader->load($fixtureName);
-        } catch (InvalidArgumentException $invalidArgumentException) {
+            $loaded = FixtureLoader::singleton()->reload(...$this->paths($files, $dirs));
+        } catch (InvalidFixtureException $invalidFixtureException) {
             return $this->jsonResponse(400, [
                 'success' => false,
-                'error' => $invalidArgumentException->getMessage(),
+                'error' => $invalidFixtureException->getMessage(),
+                'problems' => $invalidFixtureException->getProblems(),
             ]);
-        } catch (RuntimeException $runtimeException) {
-            return $this->jsonResponse(500, [
-                'success' => false,
-                'error' => $runtimeException->getMessage(),
-            ]);
+        } catch (Throwable $throwable) {
+            return $this->failure($throwable);
+        }
+
+        $ids = [];
+        foreach ($loaded->toArray() as $class => $identifiers) {
+            foreach ($identifiers as $identifier => $id) {
+                $ids[$class . '.' . $identifier] = $id;
+            }
         }
 
         return $this->jsonResponse(200, [
             'success' => true,
-            'fixture' => $result->fixtureName,
-            'data' => $result,
-        ]);
-    }
-
-    /**
-     * Load every configured fixture in one request (reset once, then stack).
-     *
-     * Fail-fast: the first fixture that raises aborts and is reported. Unlike
-     * {@see reset()}, this needs no `confirm` guard — like {@see load()} it is a
-     * seed operation, and the env gating in {@see init()} is the security control.
-     */
-    public function loadAll(HTTPRequest $request): HTTPResponse
-    {
-        $loader = FixtureLoader::create();
-
-        try {
-            $results = $loader->loadAll();
-        } catch (InvalidArgumentException $invalidArgumentException) {
-            return $this->jsonResponse(400, [
-                'success' => false,
-                'error' => $invalidArgumentException->getMessage(),
-            ]);
-        } catch (RuntimeException $runtimeException) {
-            return $this->jsonResponse(500, [
-                'success' => false,
-                'error' => $runtimeException->getMessage(),
-            ]);
-        }
-
-        return $this->jsonResponse(200, [
-            'success' => true,
-            'fixtures' => $results,
+            // An object even when empty: the client reads a map, never a list
+            'fixtures' => (object) $ids,
         ]);
     }
 
     public function reset(HTTPRequest $request): HTTPResponse
     {
+        if (!$request->isPOST()) {
+            return $this->methodNotAllowed();
+        }
+
         if ($request->getVar('confirm') !== '1') {
             return $this->jsonResponse(400, [
                 'success' => false,
@@ -154,10 +141,119 @@ class FixtureController extends Controller
             ]);
         }
 
-        FixtureLoader::create()->reset();
+        try {
+            FixtureLoader::singleton()->reset();
+        } catch (Throwable $throwable) {
+            return $this->failure($throwable);
+        }
 
         return $this->jsonResponse(200, [
             'success' => true,
+        ]);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function listVar(mixed $value): array
+    {
+        return array_values(array_filter(is_array($value) ? $value : [$value], is_string(...)));
+    }
+
+    /**
+     * The files, then each directory's fixture files, as `FixturesTask::paths()` of silverstripe-fixtures expands
+     * them: `scandir` order, `.yml`/`.yaml` only, no subdirectories, prefixed with the directory as given. Paths stay
+     * as given, so the loader's problems name what the caller sent.
+     *
+     * @param list<string> $files
+     * @param list<string> $dirs
+     *
+     * @return list<string>
+     *
+     * @throws InvalidFixtureException listing every refused path; nothing reaches the loader then
+     */
+    private function paths(array $files, array $dirs): array
+    {
+        $problems = [];
+        foreach ($files as $file) {
+            if (!$this->isInsideProject($file)) {
+                $problems[] = $file . ': outside the project';
+            } elseif (!in_array(pathinfo($file, PATHINFO_EXTENSION), self::EXTENSIONS, true)) {
+                $problems[] = $file . ': not a .yml or .yaml file';
+            }
+        }
+
+        foreach ($dirs as $dir) {
+            if (!$this->isInsideProject($dir)) {
+                $problems[] = $dir . ': outside the project';
+                continue;
+            }
+
+            $absolute = $this->absolute($dir);
+            if (!is_dir($absolute)) {
+                $problems[] = $dir . ': no directory at this path';
+                continue;
+            }
+
+            $names = array_filter(
+                scandir($absolute) ?: [],
+                static fn (string $name): bool => in_array(pathinfo($name, PATHINFO_EXTENSION), self::EXTENSIONS, true)
+                    && is_file($absolute . '/' . $name),
+            );
+            if ($names === []) {
+                $problems[] = $dir . ': no .yml or .yaml file in this directory';
+            }
+
+            foreach ($names as $name) {
+                $files[] = rtrim($dir, '/') . '/' . $name;
+            }
+        }
+
+        if ($problems !== []) {
+            throw new InvalidFixtureException($problems);
+        }
+
+        return $files;
+    }
+
+    /**
+     * Lexical containment: `.` and `..` are resolved on the path's text and symlinks are not followed.
+     */
+    private function isInsideProject(string $path): bool
+    {
+        $segments = [];
+        foreach (explode('/', $this->absolute($path)) as $segment) {
+            if ($segment === '..') {
+                array_pop($segments);
+            } elseif ($segment !== '' && $segment !== '.') {
+                $segments[] = $segment;
+            }
+        }
+
+        $normalised = '/' . implode('/', $segments);
+        $root = rtrim(Director::baseFolder(), '/');
+
+        return $normalised === $root || str_starts_with($normalised, $root . '/');
+    }
+
+    private function absolute(string $path): string
+    {
+        return Director::is_absolute($path) ? $path : Director::baseFolder() . '/' . $path;
+    }
+
+    private function methodNotAllowed(): HTTPResponse
+    {
+        return $this->jsonResponse(405, [
+            'success' => false,
+            'error' => 'Use POST',
+        ]);
+    }
+
+    private function failure(Throwable $throwable): HTTPResponse
+    {
+        return $this->jsonResponse(500, [
+            'success' => false,
+            'error' => $throwable->getMessage(),
         ]);
     }
 

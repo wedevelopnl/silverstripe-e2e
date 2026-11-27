@@ -26,7 +26,8 @@ class GenerateTinyMCECombinedTask extends BuildTask
     protected function execute(InputInterface $input, PolyOutput $output): int
     {
         // silverstripe/htmleditor-tinymce is a suggested (optional) dependency:
-        // only this CI helper needs it, while fixtures-only consumers do not.
+        // only this CI helper needs it, while consumers that use only the fixture
+        // endpoint or the Playwright client do not.
         // Skip cleanly when it is absent rather than fataling on the TinyMCE
         // classes used below.
         if (!class_exists(TinyMCECombinedGenerator::class)) {

@@ -5,30 +5,35 @@ declare(strict_types=1);
 namespace WeDevelop\E2e\Tests\Integration\Fixtures;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use RuntimeException;
+use SilverStripe\CMS\Model\SiteTree;
+use SilverStripe\Control\Director;
 use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Control\HTTPResponse_Exception;
 use SilverStripe\Control\Session;
-use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Core\Kernel;
 use SilverStripe\Dev\SapphireTest;
 use WeDevelop\E2e\Fixtures\FixtureController;
-use WeDevelop\E2e\Fixtures\FixtureLoader;
-use WeDevelop\E2e\Tests\Support\E2eFixtureTestPage;
-use WeDevelop\E2e\Tests\Support\E2eOtherTestPage;
-use WeDevelop\E2e\Tests\Support\E2eVersionedObject;
+use WeDevelop\Fixtures\FixtureLoader;
 
 #[CoversClass(FixtureController::class)]
 final class FixtureControllerTest extends SapphireTest
 {
-    protected static $extra_dataobjects = [
-        E2eFixtureTestPage::class,
-        E2eOtherTestPage::class,
-        E2eVersionedObject::class,
-    ];
+    /**
+     * Relative to the project root and reached through the harness's symlinked vendor/ path repository, so every
+     * load here also proves that containment does not follow symlinks.
+     */
+    private const string FIXTURES = 'vendor/wedevelopnl/silverstripe-e2e/tests/Integration/Fixtures/fixtures';
+
+    protected $usesDatabase = true;
+
+    private const string OUTSIDE_FIXTURE = "Page:\n  outside:\n    Title: Outside\n    URLSegment: e2e-controller-outside\n    Sort: 1\n";
 
     private string $originalEnvironment = '';
+
+    private ?string $outsideFile = null;
 
     protected function setUp(): void
     {
@@ -37,28 +42,21 @@ final class FixtureControllerTest extends SapphireTest
         $kernel = Injector::inst()->get(Kernel::class);
         $this->originalEnvironment = $kernel->getEnvironment();
         $kernel->setEnvironment('dev');
-
-        Config::modify()->set(FixtureLoader::class, 'fixtures', [
-            'simple-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/simple-page.yml',
-        ]);
-        Config::modify()->set(FixtureLoader::class, 'fixture_page_classes', [
-            E2eFixtureTestPage::class,
-        ]);
-        Config::modify()->set(FixtureLoader::class, 'purge_classes', [
-            E2eFixtureTestPage::class,
-            E2eOtherTestPage::class,
-        ]);
     }
 
     protected function tearDown(): void
     {
+        if ($this->outsideFile !== null) {
+            unlink($this->outsideFile);
+        }
+
         Injector::inst()->get(Kernel::class)->setEnvironment($this->originalEnvironment);
 
         parent::tearDown();
     }
 
     /**
-     * @param array<string, string> $postVars
+     * @param array<string, list<string>> $postVars
      * @param array<string, string> $getVars
      */
     private function dispatch(string $method, string $url, array $postVars = [], array $getVars = []): HTTPResponse|HTTPResponse_Exception
@@ -73,156 +71,243 @@ final class FixtureControllerTest extends SapphireTest
         }
     }
 
-    public function testLoadReturnsSuccessJson(): void
+    /**
+     * @return array<string, mixed>
+     */
+    private function json(HTTPResponse|HTTPResponse_Exception $response, int $expectedStatus): array
     {
-        $response = $this->dispatch('POST', 'load', ['fixture' => 'simple-page']);
-
         self::assertInstanceOf(HTTPResponse::class, $response);
-        self::assertSame(200, $response->getStatusCode());
+        self::assertSame($expectedStatus, $response->getStatusCode(), (string) $response->getBody());
+        self::assertSame('application/json', $response->getHeader('Content-Type'));
 
-        /** @var array{success: bool, fixture: string, data: array<string, mixed>} $body */
+        /** @var array<string, mixed> $body */
         $body = json_decode((string) $response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+
+        return $body;
+    }
+
+    private function pageExists(string $urlSegment): bool
+    {
+        return SiteTree::get()->filter('URLSegment', $urlSegment)->exists();
+    }
+
+    private function writeOutsideFixture(): string
+    {
+        $this->outsideFile = sys_get_temp_dir() . '/e2e-controller-outside-' . bin2hex(random_bytes(4)) . '.yml';
+        file_put_contents($this->outsideFile, self::OUTSIDE_FIXTURE);
+
+        return $this->outsideFile;
+    }
+
+    public function testLoadFilesAnswersFlatMapOfIntegerIds(): void
+    {
+        $body = $this->json($this->dispatch('POST', 'load', ['file' => [
+            self::FIXTURES . '/pages/a-home.yml',
+            self::FIXTURES . '/pages/b-about.yaml',
+        ]]), 200);
+
         self::assertTrue($body['success']);
-        self::assertSame('simple-page', $body['fixture']);
-        self::assertArrayHasKey('pageId', $body['data']);
+        self::assertIsArray($body['fixtures']);
+        self::assertSame(['Page.home', 'Page.about'], array_keys($body['fixtures']));
+        self::assertIsInt($body['fixtures']['Page.home']);
+        self::assertSame('e2e-controller-home', SiteTree::get()->byID($body['fixtures']['Page.home'])?->URLSegment);
+        self::assertTrue($this->pageExists('e2e-controller-about'));
     }
 
-    public function testLoadWithoutFixtureParamReturns400(): void
+    public function testLoadDirectoryTakesOnlyItsOwnFixtureFilesInNameOrder(): void
     {
-        $response = $this->dispatch('POST', 'load');
+        $body = $this->json($this->dispatch('POST', 'load', ['dir' => [self::FIXTURES . '/pages']]), 200);
 
-        self::assertInstanceOf(HTTPResponse::class, $response);
-        self::assertSame(400, $response->getStatusCode());
-        // The message reads `Missing required "fixture" parameter`, but the raw JSON
-        // body escapes the inner quotes (`\"fixture\"`), so assert on the unquoted
-        // stem that survives JSON encoding.
-        self::assertStringContainsString('Missing required', (string) $response->getBody());
+        self::assertIsArray($body['fixtures']);
+        self::assertSame(['Page.home', 'Page.about'], array_keys($body['fixtures']));
+        self::assertFalse($this->pageExists('e2e-controller-shout'), 'an uppercase .YML extension is skipped');
+        self::assertFalse($this->pageExists('e2e-controller-deep'), 'a subdirectory is skipped');
     }
 
-    public function testLoadUnknownFixtureReturns400(): void
+    public function testLoadTakesFilesBeforeDirectories(): void
     {
-        $response = $this->dispatch('POST', 'load', ['fixture' => 'nope']);
+        $body = $this->json($this->dispatch('POST', 'load', [
+            'dir' => [self::FIXTURES . '/pages'],
+            'file' => [self::FIXTURES . '/pages/nested/deep.yml'],
+        ]), 200);
 
-        self::assertInstanceOf(HTTPResponse::class, $response);
-        self::assertSame(400, $response->getStatusCode());
-        self::assertStringContainsString('Unknown fixture', (string) $response->getBody());
+        self::assertIsArray($body['fixtures']);
+        self::assertSame(['Page.deep', 'Page.home', 'Page.about'], array_keys($body['fixtures']));
     }
 
-    public function testLoadReturnsJsonErrorWhenFixtureCreatesNoSiteTree(): void
+    public function testSecondLoadReplacesTheRecordsOfTheFirst(): void
     {
-        Config::modify()->set(FixtureLoader::class, 'fixtures', [
-            'no-sitetree' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/no-sitetree.yml',
-        ]);
+        $this->json($this->dispatch('POST', 'load', ['file' => [self::FIXTURES . '/pages/a-home.yml']]), 200);
+        $this->json($this->dispatch('POST', 'load', ['file' => [self::FIXTURES . '/pages/b-about.yaml']]), 200);
 
-        $response = $this->dispatch('POST', 'load', ['fixture' => 'no-sitetree']);
+        self::assertFalse($this->pageExists('e2e-controller-home'));
+        self::assertTrue($this->pageExists('e2e-controller-about'));
+    }
 
-        self::assertInstanceOf(HTTPResponse::class, $response);
-        self::assertSame(500, $response->getStatusCode());
+    public function testLoadWithoutPathsAnswers400(): void
+    {
+        $body = $this->json($this->dispatch('POST', 'load'), 400);
 
-        /** @var array{success: bool, error: string} $body */
-        $body = json_decode((string) $response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+        self::assertSame(['success' => false, 'error' => 'Pass at least one file[] or dir[]'], $body);
+    }
+
+    public function testLoadRefusesRelativePathLeavingTheProject(): void
+    {
+        $outside = $this->writeOutsideFixture();
+        $depth = substr_count(trim(Director::baseFolder(), '/'), '/') + 1;
+        $path = str_repeat('../', $depth) . ltrim($outside, '/');
+
+        $body = $this->json($this->dispatch('POST', 'load', ['file' => [$path]]), 400);
+
         self::assertFalse($body['success']);
-        self::assertStringContainsString('did not create any SiteTree', $body['error']);
+        self::assertSame([$path . ': outside the project'], $body['problems']);
+        self::assertFalse($this->pageExists('e2e-controller-outside'));
     }
 
-    public function testResetWithConfirmReturnsSuccess(): void
+    public function testLoadRefusesAbsolutePathOutsideTheProject(): void
     {
-        $response = $this->dispatch('POST', 'reset', [], ['confirm' => '1']);
+        $outside = $this->writeOutsideFixture();
 
-        self::assertInstanceOf(HTTPResponse::class, $response);
-        self::assertSame(200, $response->getStatusCode());
+        $body = $this->json($this->dispatch('POST', 'load', ['file' => [$outside]]), 400);
+
+        self::assertSame([$outside . ': outside the project'], $body['problems']);
+        self::assertFalse($this->pageExists('e2e-controller-outside'));
     }
 
-    public function testResetWithoutConfirmReturns400(): void
+    public function testLoadAcceptsAbsolutePathInsideTheProject(): void
     {
-        $response = $this->dispatch('POST', 'reset');
+        $body = $this->json($this->dispatch('POST', 'load', [
+            'file' => [Director::baseFolder() . '/' . self::FIXTURES . '/pages/a-home.yml'],
+        ]), 200);
 
-        self::assertInstanceOf(HTTPResponse::class, $response);
-        self::assertSame(400, $response->getStatusCode());
-        self::assertStringContainsString('confirm=1', (string) $response->getBody());
+        self::assertIsArray($body['fixtures']);
+        self::assertArrayHasKey('Page.home', $body['fixtures']);
     }
 
-    public function testLoadAllReturnsSuccessJsonForEveryFixture(): void
+    public function testLoadRefusesDirectoryOutsideTheProject(): void
     {
-        Config::modify()->set(FixtureLoader::class, 'fixtures', [
-            'simple-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/simple-page.yml',
-            'fallback-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/fallback-page.yml',
-        ]);
-        Config::modify()->set(FixtureLoader::class, 'fixture_page_classes', [
-            E2eFixtureTestPage::class,
-            E2eOtherTestPage::class,
-        ]);
+        $dir = self::FIXTURES . str_repeat('/..', 8);
 
-        $response = $this->dispatch('POST', 'load-all');
+        $body = $this->json($this->dispatch('POST', 'load', ['dir' => [$dir, sys_get_temp_dir()]]), 400);
 
-        self::assertInstanceOf(HTTPResponse::class, $response);
-        self::assertSame(200, $response->getStatusCode());
-
-        /** @var array{success: bool, fixtures: array<string, array<string, mixed>>} $body */
-        $body = json_decode((string) $response->getBody(), true, 512, JSON_THROW_ON_ERROR);
-        self::assertTrue($body['success']);
-        self::assertArrayHasKey('simple-page', $body['fixtures']);
-        self::assertArrayHasKey('fallback-page', $body['fixtures']);
-        self::assertArrayHasKey('pageId', $body['fixtures']['simple-page']);
+        self::assertSame([$dir . ': outside the project', sys_get_temp_dir() . ': outside the project'], $body['problems']);
     }
 
-    public function testLoadAllWithNoFixturesConfiguredReturns400(): void
+    public function testLoadRefusesFileWithoutFixtureExtension(): void
     {
-        Config::modify()->set(FixtureLoader::class, 'fixtures', []);
+        $body = $this->json($this->dispatch('POST', 'load', ['file' => [
+            self::FIXTURES . '/pages/notes.txt',
+            self::FIXTURES . '/pages/c-shout.YML',
+            self::FIXTURES . '/pages/a-home.yml',
+        ]]), 400);
 
-        $response = $this->dispatch('POST', 'load-all');
+        self::assertSame([
+            self::FIXTURES . '/pages/notes.txt: not a .yml or .yaml file',
+            self::FIXTURES . '/pages/c-shout.YML: not a .yml or .yaml file',
+        ], $body['problems']);
+        self::assertFalse($this->pageExists('e2e-controller-home'));
+    }
 
-        self::assertInstanceOf(HTTPResponse::class, $response);
-        self::assertSame(400, $response->getStatusCode());
+    public function testLoadRefusesMissingAndEmptyDirectoriesTogether(): void
+    {
+        $body = $this->json($this->dispatch('POST', 'load', ['dir' => [
+            self::FIXTURES . '/does-not-exist',
+            self::FIXTURES . '/no-fixtures',
+        ]]), 400);
 
-        /** @var array{success: bool, error: string} $body */
-        $body = json_decode((string) $response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+        self::assertSame([
+            self::FIXTURES . '/does-not-exist: no directory at this path',
+            self::FIXTURES . '/no-fixtures: no .yml or .yaml file in this directory',
+        ], $body['problems']);
+    }
+
+    public function testInvalidFixtureLoadsNothingAndKeepsEarlierData(): void
+    {
+        $this->json($this->dispatch('POST', 'load', ['file' => [self::FIXTURES . '/pages/a-home.yml']]), 200);
+
+        $body = $this->json($this->dispatch('POST', 'load', ['file' => [
+            self::FIXTURES . '/pages/b-about.yaml',
+            self::FIXTURES . '/broken.yml',
+        ]]), 400);
+
         self::assertFalse($body['success']);
-        self::assertStringContainsString('No fixtures', $body['error']);
+        self::assertIsString($body['error']);
+        self::assertStringContainsString('nothing was written', $body['error']);
+        self::assertIsArray($body['problems']);
+        self::assertCount(1, $body['problems']);
+        self::assertIsString($body['problems'][0]);
+        self::assertStringContainsString('NoSuchField', $body['problems'][0]);
+        self::assertFalse($this->pageExists('e2e-controller-about'));
+        self::assertFalse($this->pageExists('e2e-controller-broken'));
+        self::assertTrue($this->pageExists('e2e-controller-home'));
     }
 
-    public function testLoadAllIsFailFastReturns500WhenFixtureCreatesNoSiteTree(): void
+    public function testLoaderFailureAnswers500(): void
     {
-        Config::modify()->set(FixtureLoader::class, 'fixtures', [
-            'simple-page' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/simple-page.yml',
-            'broken' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/no-sitetree.yml',
-        ]);
+        Injector::inst()->registerService(new class () extends FixtureLoader {
+            public function reload(string ...$paths): never
+            {
+                throw new RuntimeException('Database is gone');
+            }
 
+            public function reset(): never
+            {
+                throw new RuntimeException('Database is gone');
+            }
+        }, FixtureLoader::class);
+
+        $loadBody = $this->json($this->dispatch('POST', 'load', ['file' => [self::FIXTURES . '/pages/a-home.yml']]), 500);
+        $resetBody = $this->json($this->dispatch('POST', 'reset', [], ['confirm' => '1']), 500);
+
+        self::assertSame(['success' => false, 'error' => 'Database is gone'], $loadBody);
+        self::assertSame(['success' => false, 'error' => 'Database is gone'], $resetBody);
+    }
+
+    public function testResetRemovesTheLoadedRecords(): void
+    {
+        $this->json($this->dispatch('POST', 'load', ['file' => [self::FIXTURES . '/pages/a-home.yml']]), 200);
+
+        $body = $this->json($this->dispatch('POST', 'reset', [], ['confirm' => '1']), 200);
+
+        self::assertSame(['success' => true], $body);
+        self::assertFalse($this->pageExists('e2e-controller-home'));
+    }
+
+    public function testResetWithoutConfirmAnswers400AndKeepsData(): void
+    {
+        $this->json($this->dispatch('POST', 'load', ['file' => [self::FIXTURES . '/pages/a-home.yml']]), 200);
+
+        $body = $this->json($this->dispatch('POST', 'reset'), 400);
+
+        self::assertSame(['success' => false, 'error' => 'Missing confirm=1 query parameter'], $body);
+        self::assertTrue($this->pageExists('e2e-controller-home'));
+    }
+
+    public function testGetOnLoadAndResetAnswers405(): void
+    {
+        $this->json($this->dispatch('POST', 'load', ['file' => [self::FIXTURES . '/pages/a-home.yml']]), 200);
+
+        $loadBody = $this->json($this->dispatch('GET', 'load'), 405);
+        $resetBody = $this->json($this->dispatch('GET', 'reset', [], ['confirm' => '1']), 405);
+
+        self::assertFalse($loadBody['success']);
+        self::assertFalse($resetBody['success']);
+        self::assertTrue($this->pageExists('e2e-controller-home'));
+    }
+
+    public function testLoadAllIsGone(): void
+    {
         $response = $this->dispatch('POST', 'load-all');
 
         self::assertInstanceOf(HTTPResponse::class, $response);
-        self::assertSame(500, $response->getStatusCode());
-        self::assertStringContainsString('did not create any SiteTree', (string) $response->getBody());
-    }
-
-    public function testLoadAllIsFailFastReturns400WhenFixturePathInvalid(): void
-    {
-        Config::modify()->set(FixtureLoader::class, 'fixtures', [
-            'missing-file' => 'wedevelopnl/silverstripe-e2e:tests/Support/fixtures/does-not-exist.yml',
-        ]);
-
-        $response = $this->dispatch('POST', 'load-all');
-
-        self::assertInstanceOf(HTTPResponse::class, $response);
-        self::assertSame(400, $response->getStatusCode());
-        self::assertStringContainsString('Fixture file not found', (string) $response->getBody());
-    }
-
-    public function testLoadAllNonDevRequestReturns404(): void
-    {
-        Injector::inst()->get(Kernel::class)->setEnvironment('live');
-
-        $response = $this->dispatch('POST', 'load-all');
-
-        self::assertInstanceOf(HTTPResponse_Exception::class, $response);
-        self::assertSame(404, $response->getResponse()->getStatusCode());
+        self::assertSame(404, $response->getStatusCode());
     }
 
     public function testNonDevRequestReturns404(): void
     {
         Injector::inst()->get(Kernel::class)->setEnvironment('live');
 
-        $response = $this->dispatch('POST', 'load', ['fixture' => 'simple-page']);
+        $response = $this->dispatch('POST', 'load', ['file' => [self::FIXTURES . '/pages/a-home.yml']]);
 
         self::assertInstanceOf(HTTPResponse_Exception::class, $response);
         self::assertSame(404, $response->getResponse()->getStatusCode());
