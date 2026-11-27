@@ -44,48 +44,42 @@ import { createFixtureClient } from '@wedevelop/e2e';
 
 const fixtures = createFixtureClient(); // defaults to /dev/e2e-fixtures
 
+test.afterEach(async ({ request }) => {
+  await fixtures.reset(request);
+});
+
 test('...', async ({ page }) => {
   // `request` defaults to `page.request` (shares the page's auth cookies); pass
-  // an explicit APIRequestContext as the third argument to override.
-  const { pageId } = await fixtures.loadAndNavigate(page, 'my-fixture');
+  // an explicit APIRequestContext as the fourth argument to override.
+  const ids = await fixtures.loadAndNavigate(
+    page,
+    { files: ['app/tests/E2E/Fixture/pages.yml'], dirs: ['app/tests/E2E/Fixture/blocks'] },
+    'Page.home',
+  );
   // ...
 });
 ```
 
+| Function | Does |
+|---|---|
+| `load(request, paths)` | Clears what earlier loads put in, loads the files and directories in `paths` (`FixturePaths`: `{ files?, dirs? }`, absolute or relative to the project root) and returns the id of every record (`FixtureIds`: `{ 'Page.home': 12 }`) |
+| `reset(request)` | Clears what the loads put in, plus the classes in silverstripe-fixtures' `reset_classes` |
+| `loadAndNavigate(page, paths, record, request?)` | Loads `paths` and opens the CMS pages edit screen of `record`, such as `'Page.home'`; throws when `record` was not loaded |
+
+Every failure throws an `Error` reading `Fixture load failed (<status>): <error>`
+(or `Fixture reset failed …`), followed by one `- <problem>` line per problem,
+such as `- ../secrets.yml: outside the project`.
+
 `loadAndNavigate` is a convenience wrapper for the common case of editing the
-loaded record on the CMS pages screen (`/admin/pages/edit/show/{pageId}`). To
+loaded record on the CMS pages screen (`/admin/pages/edit/show/{id}`). To
 navigate elsewhere, compose the pieces directly:
 
 ```ts
-const { pageId } = await fixtures.load(request, 'my-fixture');
-await page.goto(`/admin/some-other-section/${pageId}`);
+const ids = await fixtures.load(request, { files: ['app/tests/E2E/Fixture/products.yml'] });
+await page.goto(`/admin/products/${ids['App\\Model\\Product.shirt']}`);
 ```
 
 The `/dev/e2e-fixtures` endpoint and the `strict_user_agent_check` relaxation are
-provided automatically by the module's dev-only config when installed. Register your
-fixtures, the classes a reset owns, and the page classes to navigate to in your
-project's own dev config:
-
-```yaml
----
-Name: app-e2e-fixtures
-Only:
-  environment: dev
----
-WeDevelop\E2e\Fixtures\FixtureLoader:
-  purge_classes:
-    - Page
-  fixture_page_classes:
-    - Page
-  fixtures:
-    my-fixture: 'my-vendor/my-module:tests/E2E/Fixture/my-fixture.yml'
-```
-
-`reset()` deletes every record of `purge_classes` (subclasses included) on both
-stages, so the E2E database must be one nobody minds losing. See the module
-README for what belongs in that list.
-
-To inject behavior around a load (e.g. suppressing model auto-scaffolding), add an
-Extension implementing `onBeforeLoad(string $name, FixtureFactory $factory)` /
-`onAfterLoad(FixtureResult $result)` and wire it via
-`WeDevelop\E2e\Fixtures\FixtureLoader.extensions`.
+provided automatically by the module's dev-only config when installed. See the
+module README for the fixture format, the path rules, what a reset clears and the
+upgrade notes from 0.2.x.

@@ -28,23 +28,57 @@ Run the task without a database:
 
 It is also available via the browser at `/dev/tasks/generate-tinymce-combined`.
 
-## Runtime fixtures for E2E tests
-The module ships a dev-gated HTTP endpoint that lets a Playwright suite seed the
-database from a named YAML fixture before each test. On request it loads the
-fixture through SilverStripe's `FixtureFactory`, applies any versioned
-post-actions declared in the fixture, and returns the created record IDs as JSON
-so specs can navigate straight to the records they need. State is reset between
-requests, so every test starts from a known baseline.
+## Test data for E2E tests
+The module ships a dev-gated HTTP endpoint that lets a Playwright suite load
+test data before each test and clear it afterwards. Loading and clearing are
+done by [`wedevelopnl/silverstripe-fixtures`](https://github.com/wedevelopnl/silverstripe-fixtures),
+which this module requires; the endpoint is the JSON layer the Playwright client
+talks to.
 
-The endpoint, the `FixtureLoader`, and the Playwright client are all provided by
-this module. A consuming project only supplies its own fixtures and a small
-dev-only configuration block.
+A spec names fixture files and directories by their path in the project. Each
+load first clears what earlier loads put in, then loads every named file in one
+transaction: either all of them load, or none does and the earlier data stays.
+The response holds the id of every record loaded, keyed by the class as written
+in the fixture and the record's identifier, such as `Page.home`.
 
-### Registering fixtures
-Register your fixtures, the classes E2E owns, and the page classes the loader
-prefers when resolving where a load should navigate, in a dev-only config
-fragment (`Only: environment: dev`) so the endpoint is never active outside
-development/CI:
+### Writing fixtures
+Fixtures use the format of `wedevelopnl/silverstripe-fixtures`: the framework's
+YAML, with `@published`, `@draft`, `@locales` and `@source` for published
+records, draft changes, translations and files. Rows are inserted without
+`write()`, so no write hook runs: **state every value a record needs**, such as a
+page's `URLSegment` and `Sort`. See that module's README for the full format.
+
+```yaml
+Page:
+  home:
+    Title: Home
+    URLSegment: home
+    Sort: 1
+    '@published': true
+```
+
+### Paths
+- A path is absolute, or relative to the project root (`Director::baseFolder()`).
+- Only paths inside the project root are loaded. The check works on the path's
+  text: `.` and `..` are resolved, symlinks are not followed, so a module
+  installed from a symlinked path repository counts as inside. A path that leads
+  out of the root is refused with `<path>: outside the project`.
+- A file must end in `.yml` or `.yaml`, in lower case.
+- A directory contributes the `.yml` and `.yaml` files (lower-case extension)
+  directly in it, in name order (byte order: digits before upper case before
+  lower case); other files and subdirectories are skipped. A missing directory,
+  or one without such files, refuses the load. These are the rules of
+  silverstripe-fixtures' `fixtures` task (`--dir`), copied into this module.
+- Files load first, in the order given, then each directory's files, in the
+  order the directories were given. References resolve across all of them.
+- Fixtures that ship inside a package are addressed through `vendor/`, such as
+  `vendor/my-vendor/my-module/tests/E2E/Fixture/pages.yml`.
+
+### Clearing test data
+A reset removes every record loaded since the last reset, tracked in
+silverstripe-fixtures' `FixtureLedger` table, plus every record of the classes in
+its `reset_classes` (subclasses included). Records a spec creates by clicking
+through the CMS are only removed when their class is listed:
 
 ```yaml
 ---
@@ -52,143 +86,39 @@ Name: app-e2e-fixtures
 Only:
   environment: dev
 ---
-WeDevelop\E2e\Fixtures\FixtureLoader:
-  purge_classes:
+WeDevelop\Fixtures\FixtureLoader:
+  reset_classes:
     - Page
-    - My\Module\Model\Element
-    - My\Module\Model\SharedBlock
-  fixture_page_classes:
-    - Page
-  fixtures:
-    my-fixture: 'my-vendor/my-module:tests/E2E/Fixture/my-fixture.yml'
 ```
 
-`fixtures` maps the name used by the Playwright client to a module-relative path
-of the fixture YAML. `fixture_page_classes` is a preference list: the loader
-resolves the page to navigate to by walking these classes in order, falling back
-to the first `SiteTree` subclass the fixture created. `purge_classes` declares
-what a reset removes, and is explained next.
-
-### What a reset deletes
-`reset()` — run before every load, and exposed on its own endpoint — deletes
-**every record of the configured `purge_classes`, and of their subclasses, on
-both stages**. Ownership is declared, not inferred: nothing keys off a URL
-segment, a naming convention, or which records the fixture happened to write.
-
-That is what makes the reset complete. A run leaves behind more than the fixture
-created — a library record with no page and no URL, a record a spec produced by
-clicking through the CMS, debris from a run that crashed halfway. None of those
-are reachable from the fixture's own records, and all of them are records of a
-purged class.
-
-The consequence is the constraint: **the E2E database must be one nobody minds
-losing.** Point the suite at a database you also develop in and a reset takes
-your own content in those classes with it.
-
-Two things to get right when declaring the scope:
-
-- **List base classes.** Subclasses come along, so one entry usually covers a
-  family — and `Page` also purges an `ErrorPage`, which `dev/build` restores.
-- **Never list identity or configuration classes.** Purging `Member` takes the
-  admin account the Playwright session logs in with, and every later run fails
-  to authenticate. The module does not police the list; it deletes what you
-  declare.
-
-`purge_classes` is empty by default and `reset()` throws while it is, so the
-loader can never wipe data nobody put in its charge.
-
-#### Upgrading from 0.1.x
-Earlier versions archived pages whose `URLSegment` started with `e2e-` and whose
-ClassName was listed in `fixture_page_classes`. Both `url_segment_prefix` and
-that role of `fixture_page_classes` are gone: declare `purge_classes` instead.
-`fixture_page_classes` keeps only its navigation role, and fixture YAML no longer
-needs the `e2e-` URLSegment convention.
-
-### Config overrides during load
-The most common write-time customisation is suppressing a side effect whose
-trigger is a config static — e.g. a container model that auto-scaffolds children
-in `onAfterWrite()` and would duplicate children the fixture declares itself.
-For that case declare the statics to force per class; each is applied only while
-the record is written and reverts immediately afterwards (it never leaks into
-normal app code):
-
-```yaml
-WeDevelop\E2e\Fixtures\FixtureLoader:
-  config_overrides:
-    My\Module\Model\Section:
-      auto_scaffold: false
-    My\Module\Model\Row:
-      auto_scaffold: false
-```
-
-Reach for an `onBeforeLoad` extension (below) only when a static value can't
-express it — dynamic values or non-config side effects.
-
-### Post-actions
-A fixture registered as an array can list `post_actions`, applied in order after
-its YAML is written. Each names an `action`, the `class` and `identifier` of a
-record in that fixture, and `fields` where the action takes any:
-
-```yaml
-WeDevelop\E2e\Fixtures\FixtureLoader:
-  fixtures:
-    my-fixture:
-      path: 'my-vendor/my-module:tests/E2E/Fixture/my-fixture.yml'
-      post_actions:
-        - action: attach_file
-          class: My\Module\Model\Icon
-          identifier: arrow
-          fields:
-            relation: Icon
-            source: 'my-vendor/my-module:tests/E2E/Fixture/arrow.svg'
-            folder: Icons
-        - action: publish_recursive
-          class: Page
-          identifier: home
-```
-
-| Action | Does | `fields` |
-|---|---|---|
-| `publish_recursive` | Publishes the record and what it owns (Versioned only) | — |
-| `unpublish` | Removes the record from live (Versioned only) | — |
-| `modify` | Sets the fields and writes the record | the field values |
-| `attach_image` | Creates an `Image` in `Uploads/`, publishes it, sets the has_one | `relation`, `source` |
-| `attach_file` | Creates the `File` subclass the extension maps to (`File.class_for_file_extension`), publishes it, sets the has_one | `relation`, `source`, `folder` (default `Uploads`) |
-
-`attach_file` stores the file as the class a CMS upload of it would get, so that
-class's write hooks run — an SVG mapped to a sanitising subclass is sanitised,
-where `attach_image` would store it as an unsanitised `Image`. A file already at
-the target path is reused as it is, so reloads do not pile up renamed copies;
-delete it to pick up a changed source.
-
-### Extension hooks
-To inject domain behavior around a load — for example computing dynamic values or
-publishing extra records — add an `Extension` implementing either hook and wire
-it via `WeDevelop\E2e\Fixtures\FixtureLoader.extensions`:
-
-```php
-public function onBeforeLoad(string $name, FixtureFactory $factory): void
-{
-    // Prepare state or the factory before the fixture is loaded.
-}
-
-public function onAfterLoad(FixtureResult $result): void
-{
-    // React to the loaded records (IDs, page id) after the fixture is applied.
-}
-```
-
-```yaml
-WeDevelop\E2e\Fixtures\FixtureLoader:
-  extensions:
-    - My\Module\E2e\MyFixtureExtension
-```
+`reset_classes` is optional and empty by default. A listed class is emptied of
+every record, not only test data, so the E2E database must then be one nobody
+minds losing. Never list `Member`: the Playwright session logs in with it.
 
 ### The endpoint
 When installed, the module registers the `/dev/e2e-fixtures` endpoint
 automatically (dev-only, via `SilverStripe\Dev\DevelopmentAdmin`) and relaxes
 `SilverStripe\Control\Session.strict_user_agent_check` so the Playwright browser
-context can drive it. Both are scoped to `environment: dev`.
+context can drive it. Both are scoped to `environment: dev`. The endpoint has no
+authentication: the dev-only registration and the path rules above are its only
+fence.
+
+| Request | Success |
+|---|---|
+| `POST load` with form fields `file[]` and/or `dir[]` | 200 `{"success": true, "fixtures": {"Page.home": 12}}` |
+| `POST reset?confirm=1` | 200 `{"success": true}` |
+
+| Failure | Status | Body |
+|---|---|---|
+| no `file[]` and no `dir[]` | 400 | `{"success": false, "error": "Pass at least one file[] or dir[]"}` |
+| a refused path, or a fixture with a mistake | 400 | `{"success": false, "error": "…", "problems": ["…"]}` |
+| reset without `confirm=1` | 400 | `{"success": false, "error": "Missing confirm=1 query parameter"}` |
+| any method but POST | 405 | `{"success": false, "error": "Use POST"}` |
+| a database or other error | 500 | `{"success": false, "error": "…"}` |
+
+Two loads at the same moment can collide on record ids. Run the suite with one
+Playwright worker, as this module's own harness does, or make sure loads run one
+after the other.
 
 ### TypeScript client
 A reusable Playwright client lives at `client/playwright/index.ts`. Expose it to
@@ -205,7 +135,24 @@ your specs with a `paths` alias in the project's `tsconfig.json` (or
 }
 ```
 
-Specs then `import { createFixtureClient, authenticateAdmin } from '@wedevelop/e2e'`.
+Specs then `import { createFixtureClient, authenticateAdmin } from '@wedevelop/e2e'`:
+
+```ts
+const fixtures = createFixtureClient();
+
+test.afterEach(async ({ request }) => {
+  await fixtures.reset(request);
+});
+
+test('edits the home page', async ({ page, request }) => {
+  const ids = await fixtures.load(request, {
+    files: ['app/tests/E2E/Fixture/pages.yml'],
+    dirs: ['app/tests/E2E/Fixture/blocks'],
+  });
+  // ids['Page.home'] === 12
+});
+```
+
 See [`client/playwright/README.md`](client/playwright/README.md) for the full
 client API and setup examples.
 
@@ -216,3 +163,42 @@ With the module's Docker services running, run the Playwright suite with:
 
 The task ensures the services are up first, then runs `npx playwright test`
 against the served app.
+
+## Upgrading from 0.2.x
+0.3.0 replaces the module's own fixture loader with
+`wedevelopnl/silverstripe-fixtures`. It is a breaking release: a `^0.2` or
+`~0.2.1` constraint does not pick it up, and pinning `~0.2.1` again rolls a
+project back.
+
+- Update with `composer update wedevelopnl/silverstripe-e2e --with-dependencies`
+  and run `dev/build`, which adds silverstripe-fixtures' `FixtureLedger` table.
+- A container that runs `composer install` against an old `composer.lock` keeps
+  the old version: update the lock, or recreate the container (this module's own
+  harness: `task destroy && task up`).
+- Rewrite every fixture in the silverstripe-fixtures format, stating every value
+  (see [Writing fixtures](#writing-fixtures)).
+- Remove the `WeDevelop\E2e\Fixtures\FixtureLoader` config block.
+
+Every feature of the old loader, and what replaces it:
+
+| 0.2.x | 0.3.0 |
+|---|---|
+| `fixtures` registry of named fixtures | Gone. Specs name the files and directories: `fixtures.load(request, { files, dirs })` |
+| `vendor/package:path.yml` notation | A path relative to the project root: `vendor/<vendor>/<package>/path.yml` |
+| `fixture_page_classes` | Gone. `loadAndNavigate` takes the record to open, such as `'Page.home'` |
+| `purge_classes` | silverstripe-fixtures' optional `reset_classes`, besides the ledger of loaded records. Records a spec creates in the CMS survive a reset unless their class is listed. An empty list no longer makes reset throw |
+| `config_overrides` | Not needed: silverstripe-fixtures inserts rows without `write()`, so no write-time side effect fires |
+| `onBeforeLoad` / `onAfterLoad` extension hooks | Nothing. State every value in the fixture |
+| post-action `publish_recursive` | `'@published': true` on each record; owned records are not published along, so give each its own |
+| post-action `unpublish` | A draft-only record (no `@published`, or `false`). The history "was published, then unpublished" cannot be expressed |
+| post-action `modify` | `'@draft'` on a published record (silverstripe-fixtures 0.1.2) |
+| post-actions `attach_image` / `attach_file` | A `File` or `Image` record with `@source` and a `Name`, linked with `=>Class.identifier`. No `Uploads/` default: declare a `Folder` as its `Parent`. No subclass chosen by extension: name the class in the fixture |
+| `POST load` with `fixture=<name>` | `POST load` with `file[]` and/or `dir[]`; the flat `fixtures` map replaces `data` (`pageId`, `pageUrl`, `fixtureMap`) |
+| `POST load-all` | Gone (404). Load a directory with `dir[]` |
+| `GET reset` | POST only; any other method answers 405 |
+| `load-e2e-fixtures` task | silverstripe-fixtures' `fixtures` task: `vendor/bin/sake tasks:fixtures --action=reset --dir=<dir>` |
+| `WeDevelop\E2e\Fixtures\FixtureLoader` / `FixtureResult` in PHP tests | `WeDevelop\Fixtures\FixtureLoader` (`load()`, `reload()`, `reset()`) and `LoadedFixtures` (`idOf()`, `toArray()`) |
+| Client `load(request, name)` / `FixtureLoadResponse` | `load(request, paths)` returning `FixtureIds`; the paths are a `FixturePaths` |
+| Client `loadAndNavigate(page, name)` | `loadAndNavigate(page, paths, record)` |
+| Client `loadAll` / `FixtureLoadAllResponse` | `load(request, { dirs: [...] })` |
+| Client `FixtureMap` | `FixtureIds`: flat `Class.identifier → id` |
