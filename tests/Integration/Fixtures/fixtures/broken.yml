@@ -1,0 +1,6 @@
+Page:
+  broken:
+    Title: Broken
+    URLSegment: e2e-controller-broken
+    Sort: 5
+    NoSuchField: oops

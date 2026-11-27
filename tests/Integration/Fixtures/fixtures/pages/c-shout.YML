@@ -1,0 +1,5 @@
+Page:
+  shout:
+    Title: Shout
+    URLSegment: e2e-controller-shout
+    Sort: 3
