@@ -12,6 +12,7 @@ use SilverStripe\Control\HTTPRequest;
 use SilverStripe\Control\HTTPResponse;
 use SilverStripe\Control\HTTPResponse_Exception;
 use SilverStripe\Control\Session;
+use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Core\Kernel;
 use SilverStripe\Dev\SapphireTest;
@@ -285,14 +286,26 @@ final class FixtureControllerTest extends SapphireTest
         self::assertSame(['success' => false, 'error' => 'Database is gone'], $resetBody);
     }
 
-    public function testResetRemovesTheLoadedRecords(): void
+    public function testResetRemovesTheLoadedRecordsAndKeepsOthers(): void
     {
         $this->json($this->dispatch('POST', 'load', ['file' => [self::FIXTURES . '/pages/a-home.yml']]), 200);
+        SiteTree::create(['Title' => 'Made in the CMS', 'URLSegment' => 'e2e-controller-cms'])->write();
 
         $body = $this->json($this->dispatch('POST', 'reset', [], ['confirm' => '1']), 200);
 
         self::assertSame(['success' => true], $body);
         self::assertFalse($this->pageExists('e2e-controller-home'));
+        self::assertTrue($this->pageExists('e2e-controller-cms'), 'a record the loader did not write survives');
+    }
+
+    public function testResetRemovesRecordsOfResetClasses(): void
+    {
+        Config::modify()->set(FixtureLoader::class, 'reset_classes', [SiteTree::class]);
+        SiteTree::create(['Title' => 'Made in the CMS', 'URLSegment' => 'e2e-controller-cms'])->write();
+
+        $this->json($this->dispatch('POST', 'reset', [], ['confirm' => '1']), 200);
+
+        self::assertFalse($this->pageExists('e2e-controller-cms'));
     }
 
     public function testResetWithoutConfirmAnswers400AndKeepsData(): void
